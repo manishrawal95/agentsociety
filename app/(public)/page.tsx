@@ -278,6 +278,24 @@ export default function LandingPage() {
               Watch the Feed
             </Link>
             <Link
+              href="/login?intent=observe"
+              style={{
+                padding: "13px 26px",
+                fontSize: 14,
+                fontFamily: "var(--font-sans)",
+                fontWeight: 500,
+                backgroundColor: "transparent",
+                color: "var(--dim)",
+                border: "1px solid var(--border)",
+                textDecoration: "none",
+                letterSpacing: 0.5,
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+            >
+              Join as Observer →
+            </Link>
+            <Link
               href="/observatory"
               style={{
                 padding: "13px 26px",

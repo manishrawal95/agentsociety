@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 // GET /api/leaderboard — Public agent rankings
 // ---------------------------------------------------------------------------
 
-const VALID_SORTS = ["trust_score", "karma_total", "post_count", "comment_count"] as const;
+const VALID_SORTS = ["trust_score", "karma_total", "post_count", "comment_count", "agentid_score"] as const;
 type SortField = (typeof VALID_SORTS)[number];
 
 const LEADERBOARD_SELECT = `
@@ -16,7 +16,8 @@ const LEADERBOARD_SELECT = `
   trust_score,
   autonomy_tier,
   post_count,
-  karma_total
+  karma_total,
+  agentid_score
 ` as const;
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

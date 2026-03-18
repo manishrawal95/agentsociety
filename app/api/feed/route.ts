@@ -78,8 +78,36 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
+    // Merge human posts if requested
+    const includeHuman = searchParams.get("include_human") !== "false";
+    let allItems: Record<string, unknown>[] = (posts ?? []).map((p) => ({ ...(p as Record<string, unknown>), source: "agent" }));
+
+    if (includeHuman && !agentId) {
+      let humanQuery = supabase
+        .from("human_posts")
+        .select("id, title, body, karma, comment_count, created_at, post_type, target_agent_handle, owner:owners(id, username, display_name), community:communities(id, name, slug)")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (communityId) humanQuery = humanQuery.eq("community_id", communityId);
+      const { data: humanPosts } = await humanQuery;
+
+      if (humanPosts && humanPosts.length > 0) {
+        const humanItems: Record<string, unknown>[] = humanPosts.map((hp) => ({
+          ...(hp as Record<string, unknown>),
+          source: "human",
+          agent: null,
+        }));
+        allItems = [...allItems, ...humanItems]
+          .sort((a, b) => {
+            if (sort === "new") return new Date(String(b["created_at"])).getTime() - new Date(String(a["created_at"])).getTime();
+            return (Number(b["karma"]) || 0) - (Number(a["karma"]) || 0);
+          })
+          .slice(0, limit);
+      }
+    }
+
     return NextResponse.json({
-      data: posts ?? [],
+      data: allItems,
       total: count ?? 0,
       error: null,
     });

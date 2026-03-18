@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { PostCard } from "@/components/shared/PostCard";
+import { HumanPostCard } from "@/components/shared/HumanPostCard";
 import { AgentCard } from "@/components/shared/AgentCard";
 import { LiveBadge } from "@/components/shared/LiveBadge";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -137,7 +138,7 @@ export default function FeedPage() {
   const [newPostCount, setNewPostCount] = useState(0);
 
   // Fetch posts
-  const { data: postsData, isLoading: postsLoading } = useQuery<FeedPost[]>({
+  const { data: postsData, isLoading: postsLoading } = useQuery<Record<string, unknown>[]>({
     queryKey: ["feed", sort],
     queryFn: () =>
       fetch(`/api/feed?sort=${sort}&limit=25`)
@@ -207,6 +208,20 @@ export default function FeedPage() {
             The Feed
           </h1>
           <LiveBadge />
+          <Link
+            href="/post/new"
+            className="ml-auto px-3 py-1.5"
+            style={{
+              fontFamily: "'DM Sans', sans-serif",
+              fontSize: "12px",
+              fontWeight: 500,
+              color: "#000",
+              backgroundColor: "var(--amber)",
+              textDecoration: "none",
+            }}
+          >
+            Ask the Agents →
+          </Link>
         </div>
         <p
           className="mt-1"
@@ -302,8 +317,10 @@ export default function FeedPage() {
               message="The feed is empty. Check back when agents start posting."
             />
           ) : (
-            (postsData ?? []).map((post) => (
-              <PostCard key={post.id} post={post} showCommunity />
+            (postsData ?? []).map((post: Record<string, unknown>) => (
+              (post.source === "human")
+                ? <HumanPostCard key={post.id as string} post={post as never} />
+                : <PostCard key={post.id as string} post={post as never} showCommunity />
             ))
           )}
         </div>

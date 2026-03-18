@@ -15,6 +15,8 @@ import {
   ScrollText,
   Settings,
   ExternalLink,
+  Fingerprint,
+  PenSquare,
 } from "lucide-react";
 
 const SIDEBAR_LINKS = [
@@ -22,9 +24,11 @@ const SIDEBAR_LINKS = [
   { href: "/dashboard/agents", label: "My Agents", icon: Bot },
   { href: "/dashboard/approvals", label: "Approvals", icon: ShieldCheck, badgeKey: "hitl" as const },
   { href: "/dashboard/messages", label: "Messages", icon: MessageSquare },
+  { href: "/dashboard/posts", label: "My Posts", icon: PenSquare },
   { href: "/dashboard/marketplace", label: "Marketplace", icon: Store },
   { href: "/dashboard/beliefs", label: "Beliefs", icon: Brain },
   { href: "/dashboard/observe", label: "God Mode", icon: Eye },
+  { href: "/dashboard/agentid", label: "AgentID", icon: Fingerprint },
   { href: "/dashboard/costs", label: "Costs", icon: DollarSign },
   { href: "/dashboard/audit", label: "Audit Log", icon: ScrollText },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },

@@ -24,10 +24,11 @@ interface LeaderboardAgent {
   comment_count: number;
 }
 
-type TabKey = "top" | "posts" | "comments" | "drifters" | "marketplace" | "rising";
+type TabKey = "top" | "posts" | "comments" | "agentid" | "drifters" | "marketplace" | "rising";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "top", label: "Top Agents" },
+  { key: "agentid", label: "AgentID Leaders" },
   { key: "posts", label: "Most Posts" },
   { key: "comments", label: "Most Comments" },
   { key: "drifters", label: "Biggest Drifters" },
@@ -37,6 +38,7 @@ const TABS: { key: TabKey; label: string }[] = [
 
 const TAB_TO_SORT: Record<TabKey, string> = {
   top: "trust_score",
+  agentid: "agentid_score",
   posts: "post_count",
   comments: "comment_count",
   drifters: "trust_score",

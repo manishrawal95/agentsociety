@@ -260,7 +260,7 @@ async function processAgent(agent: AgentRow, requiredActionInput: string): Promi
   }
 
   // Fetch context
-  const [beliefs, myPosts, feedPosts, communities, otherAgents, openTasks, memories] = await Promise.all([
+  const [beliefs, myPosts, feedPosts, communities, otherAgents, openTasks, memories, humanPosts] = await Promise.all([
     fetchBeliefs(agent.id),
     fetchMyPosts(agent.id),
     fetchFeedPosts(),
@@ -268,10 +268,11 @@ async function processAgent(agent: AgentRow, requiredActionInput: string): Promi
     fetchOtherAgents(agent.id),
     fetchOpenTasks(agent.id),
     fetchMemories(agent.id),
+    fetchRecentHumanPosts(),
   ]);
 
   // Build prompt
-  const systemPrompt = buildSystemPrompt(agent, beliefs, myPosts, feedPosts, communities, otherAgents, openTasks, memories, requiredAction);
+  const systemPrompt = buildSystemPrompt(agent, beliefs, myPosts, feedPosts, communities, otherAgents, openTasks, memories, humanPosts, requiredAction);
   const userMessage = `It is ${new Date().toISOString()}. Trigger: heartbeat. Your REQUIRED action this cycle: ${requiredAction}. You MUST use this action type.`;
 
   // Call LLM
@@ -397,6 +398,35 @@ async function fetchOpenTasks(excludeAgentId: string): Promise<OpenTask[]> {
   return (data as OpenTask[] | null) ?? [];
 }
 
+interface HumanPostContext {
+  title: string;
+  body: string;
+  post_type: string;
+  display_name: string;
+  target_agent_handle: string | null;
+}
+
+async function fetchRecentHumanPosts(): Promise<HumanPostContext[]> {
+  const sixHoursAgo = new Date(Date.now() - 6 * 3600000).toISOString();
+  const { data } = await supabase
+    .from("human_posts")
+    .select("title, body, post_type, target_agent_handle, owner:owners(display_name, username)")
+    .gte("created_at", sixHoursAgo)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  return (data ?? []).map((hp: Record<string, unknown>) => {
+    const owner = hp.owner as Record<string, unknown> | null;
+    return {
+      title: String(hp.title),
+      body: String(hp.body),
+      post_type: String(hp.post_type),
+      display_name: String(owner?.display_name ?? owner?.username ?? "Human"),
+      target_agent_handle: hp.target_agent_handle ? String(hp.target_agent_handle) : null,
+    };
+  });
+}
+
 async function fetchMemories(agentId: string): Promise<AgentMemory[]> {
   const { data } = await supabase
     .from("agent_memory")
@@ -420,6 +450,7 @@ function buildSystemPrompt(
   otherAgents: OtherAgent[],
   openTasks: OpenTask[],
   memories: AgentMemory[],
+  humanPosts: HumanPostContext[],
   requiredAction: string
 ): string {
   const beliefsBlock =
@@ -491,6 +522,14 @@ ${otherAgentsList}
 
 ### Open Marketplace Tasks
 ${openTasksList}
+
+### Recent Human Observer Activity
+${humanPosts.length > 0
+    ? humanPosts.map((hp) => {
+        const directed = hp.target_agent_handle === agent.handle ? " ⚠ DIRECTED AT YOU" : "";
+        return `- [${hp.post_type.toUpperCase()}] "${hp.title}" by human @${hp.display_name}${directed}\n  ${hp.body.slice(0, 150)}`;
+      }).join("\n")
+    : "No recent human observer posts."}
 
 ---
 
@@ -1326,6 +1365,74 @@ async function insertAnomaly(
 }
 
 // ---------------------------------------------------------------------------
+// AgentID credential refresh (runs every 24h)
+// ---------------------------------------------------------------------------
+
+async function refreshAgentIDCredentials(): Promise<void> {
+  console.info("[agentid] starting daily credential refresh...");
+
+  const { data: agents } = await supabase
+    .from("agents")
+    .select("id, handle")
+    .eq("status", "active");
+
+  if (!agents || agents.length === 0) {
+    console.info("[agentid] no active agents");
+    return;
+  }
+
+  let count = 0;
+  for (const agent of agents) {
+    try {
+      const { data: rawCred } = await supabase.rpc("generate_agentid_credential", { p_agent_id: agent.id });
+      if (!rawCred) continue;
+
+      const raw = rawCred as Record<string, unknown>;
+      const taskCompletionRate = Number(raw.task_completion_rate ?? 0);
+      const avgPeerReview = Number(raw.avg_peer_review_score ?? 0);
+      const beliefConsistency = Number(raw.belief_consistency_score ?? 0.5);
+      const trustNetworkSize = Number(raw.trust_network_size ?? 0);
+      const highTrustEndorsements = Number(raw.high_trust_endorsements ?? 0);
+      const trustScore = Number(raw.trust_score ?? 0);
+
+      // Composite scores
+      const reliability = Math.round(taskCompletionRate * 40 + (avgPeerReview / 5) * 30 + beliefConsistency * 30);
+      const influence = Math.round(Math.min(trustNetworkSize / 50, 1) * 50 + Math.min(highTrustEndorsements / 20, 1) * 50);
+      const overall = Math.round(trustScore * 0.35 + reliability * 0.35 + influence * 0.30);
+
+      // Build credential
+      const credentialData: Record<string, unknown> = { ...raw, reliability_score: reliability, influence_score: influence, overall_agentid_score: overall };
+
+      // Hash
+      const sortedKeys = Object.keys(credentialData).sort();
+      const canonical: Record<string, unknown> = {};
+      for (const key of sortedKeys) canonical[key] = credentialData[key];
+      const { createHash } = await import("crypto");
+      const hash = createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+
+      // Store
+      await supabase.from("agentid_credentials").update({ is_current: false }).eq("agent_id", agent.id);
+      await supabase.from("agentid_credentials").insert({
+        agent_id: agent.id,
+        credential: { ...credentialData, credential_hash: hash },
+        credential_hash: hash,
+        issued_at: raw.issued_at,
+        expires_at: raw.expires_at,
+        is_current: true,
+      });
+      await supabase.from("agents").update({ agentid_score: overall, agentid_issued_at: new Date().toISOString() }).eq("id", agent.id);
+
+      count++;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "unknown";
+      console.error(`[agentid] failed for ${agent.handle}: ${msg}`);
+    }
+  }
+
+  console.info(`[agentid] refresh complete: ${count}/${agents.length} credentials updated`);
+}
+
+// ---------------------------------------------------------------------------
 // Daily cost reset (checks hourly, resets at midnight UTC)
 // ---------------------------------------------------------------------------
 
@@ -1382,6 +1489,14 @@ async function main(): Promise<void> {
       console.error(`[standalone] cost-reset error: ${msg}`);
     });
   }, COST_RESET_INTERVAL_MS);
+
+  // Schedule AgentID credential refresh (every 24h)
+  setInterval(() => {
+    refreshAgentIDCredentials().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : "unknown";
+      console.error(`[standalone] agentid-refresh error: ${msg}`);
+    });
+  }, 24 * 60 * 60 * 1000);
 
   console.info("[standalone] runtime running. Press Ctrl+C to stop.\n");
 }
