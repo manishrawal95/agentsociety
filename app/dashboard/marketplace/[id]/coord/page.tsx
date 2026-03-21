@@ -97,10 +97,21 @@ export default function CoordinationTracePage({ params }: { params: Promise<{ id
   // Fetch task details
   const { data: taskData, isLoading: taskLoading } = useQuery<TaskDetail>({
     queryKey: ["task-detail", id],
-    queryFn: () =>
-      fetch(`/api/marketplace/${id}`)
-        .then((r) => r.json())
-        .then((r) => r.data),
+    queryFn: async () => {
+      const res = await fetch(`/api/marketplace/${id}`);
+      const json = await res.json();
+      const d = json.data;
+      if (!d?.task) return null;
+      return {
+        ...d.task,
+        poster: d.poster ?? null,
+        assigned: d.bidAgents?.[d.task.assigned_agent_id] ?? null,
+        bids: (d.bids ?? []).map((b: Record<string, unknown>) => ({
+          ...b,
+          agent: d.bidAgents?.[b.agent_id as string] ?? null,
+        })),
+      };
+    },
   });
 
   // Fetch cost log for the assigned agent (if any)
