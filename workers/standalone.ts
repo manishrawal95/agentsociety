@@ -1054,53 +1054,103 @@ async function queueForReview(
 // ---------------------------------------------------------------------------
 
 async function handleSelectBid(agent: AgentRow): Promise<void> {
-  // Find tasks posted by this agent that have bids but no assignee
+  // Find ALL open tasks posted by this agent that have bids
   const { data: tasks } = await supabase
     .from("tasks")
-    .select("id, title, bounty_sparks")
+    .select("id, title, description, bounty_sparks")
     .eq("poster_agent_id", agent.id)
     .eq("status", "open")
-    .limit(1);
+    .limit(5);
 
   if (!tasks || tasks.length === 0) return;
-  const task = tasks[0];
 
-  // Get bids for this task
-  const { data: bids } = await supabase
-    .from("task_bids")
-    .select("id, agent_id, pitch, price_usd")
-    .eq("task_id", task.id)
-    .eq("status", "pending");
+  for (const task of tasks) {
+    const { data: bids } = await supabase
+      .from("task_bids")
+      .select("id, agent_id, pitch, price_usd")
+      .eq("task_id", task.id)
+      .eq("status", "pending");
 
-  if (!bids || bids.length === 0) return;
+    if (!bids || bids.length === 0) continue;
 
-  // Select the best bid (highest trust agent among bidders)
-  const bidderIds = bids.map((b) => b.agent_id as string);
-  const { data: bidders } = await supabase
-    .from("agents")
-    .select("id, trust_score")
-    .in("id", bidderIds);
+    // Get bidder info
+    const bidderIds = bids.map((b) => b.agent_id as string);
+    const { data: bidders } = await supabase
+      .from("agents")
+      .select("id, name, handle, trust_score")
+      .in("id", bidderIds);
 
-  const trustMap = new Map((bidders ?? []).map((b) => [b.id as string, b.trust_score as number]));
-  const bestBid = bids.sort((a, b) => (trustMap.get(b.agent_id as string) ?? 0) - (trustMap.get(a.agent_id as string) ?? 0))[0];
+    const bidderMap = new Map((bidders ?? []).map((b) => [b.id as string, b as { id: string; name: string; handle: string; trust_score: number }]));
 
-  // Assign task
-  await supabase.from("tasks").update({
-    status: "assigned",
-    assigned_agent_id: bestBid.agent_id,
-  }).eq("id", task.id);
+    // Use LLM to evaluate bids
+    const bidSummaries = bids.map((b) => {
+      const bidder = bidderMap.get(b.agent_id as string);
+      return `- @${bidder?.handle ?? "unknown"} (trust: ${bidder?.trust_score ?? 0}): "${b.pitch}" — price: ${Math.round((b.price_usd as number) * 100)}⚡`;
+    }).join("\n");
 
-  // Update bid statuses
-  await supabase.from("task_bids").update({ status: "selected" }).eq("id", bestBid.id);
-  await supabase.from("task_bids").update({ status: "rejected" }).eq("task_id", task.id).neq("id", bestBid.id);
+    const evalResult = await generateResponse({
+      provider: agent.provider as ProviderName,
+      model: agent.model,
+      systemPrompt: `${agent.soul_md}\n\nYou are evaluating bids on a task you posted. Pick the BEST bid and explain why. For each rejected bid, give a brief reason.`,
+      messages: [{ role: "user", content: `Task: "${task.title}"\nDescription: ${(task.description as string).slice(0, 300)}\n\nBids:\n${bidSummaries}\n\nRespond with ONLY valid JSON:\n{\n  "selected_handle": "@handle_of_winner",\n  "selection_reason": "why you picked them (1 sentence)",\n  "rejections": { "@handle": "reason (1 sentence)", ... }\n}` }],
+      maxTokens: 512,
+      temperature: 0.3,
+      agentId: agent.id,
+    });
 
-  console.info(`[agent:${agent.handle}] selected bid from ${bestBid.agent_id} for task "${task.title}" (${task.bounty_sparks}⚡)`);
+    // Parse evaluation
+    let selectedHandle = "";
+    let selectionReason = "Best qualified bidder";
+    let rejections: Record<string, string> = {};
 
-  await supabase.from("agent_memory").insert({
-    agent_id: agent.id, memory_type: "episodic",
-    content: `Selected a bid for my task "${task.title}" — assigned to an agent for ${task.bounty_sparks}⚡`,
-    importance_score: 0.7,
-  });
+    try {
+      const cleaned = evalResult.content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+      const parsed = JSON.parse(cleaned) as { selected_handle?: string; selection_reason?: string; rejections?: Record<string, string> };
+      selectedHandle = String(parsed.selected_handle ?? "").replace("@", "");
+      selectionReason = String(parsed.selection_reason ?? "Best qualified bidder").slice(0, 200);
+      rejections = parsed.rejections ?? {};
+    } catch {
+      // Fallback: pick highest trust
+      const sorted = bids.sort((a, b) => (bidderMap.get(b.agent_id as string)?.trust_score ?? 0) - (bidderMap.get(a.agent_id as string)?.trust_score ?? 0));
+      const winner = bidderMap.get(sorted[0].agent_id as string);
+      selectedHandle = winner?.handle ?? "";
+      selectionReason = "Selected by trust score (evaluation failed)";
+    }
+
+    // Find the winning bid
+    const winningBid = bids.find((b) => {
+      const bidder = bidderMap.get(b.agent_id as string);
+      return bidder?.handle === selectedHandle;
+    }) ?? bids[0];
+
+    // Assign task
+    await supabase.from("tasks").update({ status: "assigned", assigned_agent_id: winningBid.agent_id }).eq("id", task.id);
+
+    // Update winning bid
+    await supabase.from("task_bids").update({
+      status: "selected",
+      selection_reason: selectionReason,
+    }).eq("id", winningBid.id);
+
+    // Update rejected bids with reasons
+    for (const bid of bids) {
+      if (bid.id === winningBid.id) continue;
+      const bidder = bidderMap.get(bid.agent_id as string);
+      const reason = rejections[`@${bidder?.handle}`] ?? rejections[bidder?.handle ?? ""] ?? "Another bidder was more suitable for this task";
+      await supabase.from("task_bids").update({
+        status: "rejected",
+        rejection_reason: reason.slice(0, 200),
+      }).eq("id", bid.id);
+    }
+
+    console.info(`[agent:${agent.handle}] evaluated ${bids.length} bids for "${task.title}" — selected @${selectedHandle}: ${selectionReason}`);
+
+    await supabase.from("agent_memory").insert({
+      agent_id: agent.id, memory_type: "episodic",
+      content: `Evaluated ${bids.length} bids for "${task.title}" — selected @${selectedHandle}: ${selectionReason}`,
+      importance_score: 0.7,
+    });
+  }
 }
 
 async function handleDoWork(agent: AgentRow): Promise<void> {

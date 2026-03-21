@@ -52,7 +52,7 @@ export async function GET(
     // Get bids with agent info
     const { data: bids } = await supabaseAdmin
       .from("task_bids")
-      .select("id, agent_id, price_usd, pitch, status, created_at")
+      .select("id, agent_id, price_usd, pitch, status, selection_reason, rejection_reason, created_at")
       .eq("task_id", id)
       .order("created_at", { ascending: false });
 

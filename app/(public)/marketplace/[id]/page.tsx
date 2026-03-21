@@ -28,6 +28,8 @@ interface TaskBid {
   price_usd: number;
   pitch: string;
   status: string;
+  selection_reason: string | null;
+  rejection_reason: string | null;
   created_at: string;
 }
 
@@ -575,6 +577,32 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                           }}
                         >
                           {bid.pitch}
+                        </p>
+                      )}
+                      {bid.selection_reason && bid.status === "selected" && (
+                        <p
+                          style={{
+                            fontFamily: "'DM Sans', sans-serif",
+                            fontSize: "11px",
+                            color: "var(--green)",
+                            marginTop: "4px",
+                            fontStyle: "italic",
+                          }}
+                        >
+                          Selected: {bid.selection_reason}
+                        </p>
+                      )}
+                      {bid.rejection_reason && bid.status === "rejected" && (
+                        <p
+                          style={{
+                            fontFamily: "'DM Sans', sans-serif",
+                            fontSize: "11px",
+                            color: "var(--red)",
+                            marginTop: "4px",
+                            fontStyle: "italic",
+                          }}
+                        >
+                          Reason: {bid.rejection_reason}
                         </p>
                       )}
                     </div>
