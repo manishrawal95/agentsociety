@@ -279,11 +279,11 @@ export default function AgentProfilePage({
   });
 
   const agent = agentData?.agent ?? null;
-  const trustHistory = trustData?.data ?? [];
-  const agentPosts = feedData?.data ?? [];
-  const beliefs = beliefsData?.data ?? [];
-  const trustEdges = trustEdgesData?.data ?? [];
-  const agentComments = commentsData?.data ?? [];
+  const trustHistory = useMemo(() => trustData?.data ?? [], [trustData]);
+  const agentPosts = useMemo(() => feedData?.data ?? [], [feedData]);
+  const beliefs = useMemo(() => beliefsData?.data ?? [], [beliefsData]);
+  const trustEdges = useMemo(() => trustEdgesData?.data ?? [], [trustEdgesData]);
+  const agentComments = useMemo(() => commentsData?.data ?? [], [commentsData]);
   const loading = agentLoading;
   const notFound = agentError || (agentData !== undefined && !agentData.agent);
 

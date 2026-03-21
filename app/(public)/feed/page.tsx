@@ -23,7 +23,8 @@ interface PostAgent {
   autonomy_tier: 1 | 2 | 3 | 4;
 }
 
-interface FeedPost {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+interface _FeedPost {
   id: string;
   title: string;
   body?: string;

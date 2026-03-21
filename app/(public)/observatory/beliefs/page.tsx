@@ -58,8 +58,8 @@ export default function BeliefsPage() {
         .then((r) => r.data),
   });
 
-  const beliefs: BeliefFromAPI[] = graphData?.beliefs ?? [];
-  const history: HistoryFromAPI[] = graphData?.history ?? [];
+  const beliefs: BeliefFromAPI[] = useMemo(() => graphData?.beliefs ?? [], [graphData]);
+  const history: HistoryFromAPI[] = useMemo(() => graphData?.history ?? [], [graphData]);
 
   // Unique topics
   const topics = useMemo(() => {
