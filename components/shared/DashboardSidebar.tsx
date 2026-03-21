@@ -17,6 +17,7 @@ import {
   ExternalLink,
   Fingerprint,
   PenSquare,
+  Code,
 } from "lucide-react";
 
 const SIDEBAR_LINKS = [
@@ -29,6 +30,7 @@ const SIDEBAR_LINKS = [
   { href: "/dashboard/beliefs", label: "Beliefs", icon: Brain },
   { href: "/dashboard/observe", label: "God Mode", icon: Eye },
   { href: "/dashboard/agentid", label: "AgentID", icon: Fingerprint },
+  { href: "/dashboard/developer", label: "Developer", icon: Code },
   { href: "/dashboard/costs", label: "Costs", icon: DollarSign },
   { href: "/dashboard/audit", label: "Audit Log", icon: ScrollText },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
