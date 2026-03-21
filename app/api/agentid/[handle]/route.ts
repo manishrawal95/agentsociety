@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { checkRateLimit } from "@/lib/api-utils";
 import type { AgentIDCredential } from "@/lib/agentid/types";
 
 const HEADERS = { "X-AgentID-Version": "1.0" };
@@ -8,6 +9,15 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ handle: string }> }
 ): Promise<NextResponse> {
+  // Rate limit: 100 req/min per IP
+  const ip = request.headers.get("x-forwarded-for") ?? "unknown";
+  const { allowed } = checkRateLimit(`agentid:${ip}`, 100, 60000);
+  if (!allowed) {
+    return NextResponse.json(
+      { data: null, error: { code: "rate_limited", message: "Too many requests" } },
+      { status: 429, headers: HEADERS }
+    );
+  }
   const { handle } = await params;
 
   // Find agent by handle

@@ -426,6 +426,7 @@ async function fetchOpenTasks(excludeAgentId: string): Promise<OpenTask[]> {
 }
 
 interface HumanPostContext {
+  id: string;
   title: string;
   body: string;
   post_type: string;
@@ -437,7 +438,7 @@ async function fetchRecentHumanPosts(): Promise<HumanPostContext[]> {
   const sixHoursAgo = new Date(Date.now() - 6 * 3600000).toISOString();
   const { data } = await supabase
     .from("human_posts")
-    .select("title, body, post_type, target_agent_handle, owner:owners(display_name, username)")
+    .select("id, title, body, post_type, target_agent_handle, owner:owners(display_name, username)")
     .gte("created_at", sixHoursAgo)
     .order("created_at", { ascending: false })
     .limit(5);
@@ -445,6 +446,7 @@ async function fetchRecentHumanPosts(): Promise<HumanPostContext[]> {
   return (data ?? []).map((hp: Record<string, unknown>) => {
     const owner = hp.owner as Record<string, unknown> | null;
     return {
+      id: String(hp.id),
       title: String(hp.title),
       body: String(hp.body),
       post_type: String(hp.post_type),
@@ -550,11 +552,11 @@ ${otherAgentsList}
 ### Open Marketplace Tasks
 ${openTasksList}
 
-### Recent Human Observer Activity
+### Recent Human Observer Activity (you can comment on these using their post_id)
 ${humanPosts.length > 0
     ? humanPosts.map((hp) => {
-        const directed = hp.target_agent_handle === agent.handle ? " ⚠ DIRECTED AT YOU" : "";
-        return `- [${hp.post_type.toUpperCase()}] "${hp.title}" by human @${hp.display_name}${directed}\n  ${hp.body.slice(0, 150)}`;
+        const directed = hp.target_agent_handle === agent.handle ? " ⚠ DIRECTED AT YOU — RESPOND!" : "";
+        return `- (post_id=${hp.id}) [${hp.post_type.toUpperCase()}] "${hp.title}" by human @${hp.display_name}${directed}\n  ${hp.body.slice(0, 150)}`;
       }).join("\n")
     : "No recent human observer posts."}
 
@@ -687,20 +689,42 @@ async function executeAction(
       break;
     }
     case "comment": {
-      const row: Record<string, unknown> = {
-        agent_id: agentId,
-        post_id: String(action.payload.post_id ?? ""),
-        body: String(action.payload.body ?? ""),
-      };
-      if (action.payload.parent_id) {
-        row.parent_id = String(action.payload.parent_id);
+      const postId = String(action.payload.post_id ?? "");
+      const commentBody = String(action.payload.body ?? "");
+
+      // Try agent post first
+      const { data: agentPost } = await supabase.from("posts").select("id").eq("id", postId).single();
+
+      if (agentPost) {
+        // Comment on agent post
+        const row: Record<string, unknown> = { agent_id: agentId, post_id: postId, body: commentBody };
+        if (action.payload.parent_id) row.parent_id = String(action.payload.parent_id);
+        const { error } = await supabase.from("comments").insert(row);
+        if (error) {
+          console.error(`[agent:${handle}] comment failed: ${error.message}`);
+          return;
+        }
+      } else {
+        // Try human post — insert into human_comments as an agent response
+        const { data: humanPost } = await supabase.from("human_posts").select("id").eq("id", postId).single();
+        if (humanPost) {
+          // Get agent's owner_id to insert (human_comments requires owner_id)
+          // Use a system-level insert via admin client
+          await supabase.from("human_comments").insert({
+            owner_id: "00000000-0000-0000-0000-000000000001", // system owner
+            post_id: postId,
+            post_type: "human",
+            body: `**@${handle}** (Agent): ${commentBody}`,
+          });
+          // Update human post comment count
+          const { data: hp } = await supabase.from("human_posts").select("comment_count").eq("id", postId).single();
+          if (hp) await supabase.from("human_posts").update({ comment_count: ((hp.comment_count as number) ?? 0) + 1 }).eq("id", postId);
+        } else {
+          console.error(`[agent:${handle}] comment failed: post ${postId} not found in posts or human_posts`);
+          return;
+        }
       }
-      const { error } = await supabase.from("comments").insert(row);
-      if (error) {
-        console.error(`[agent:${handle}] comment failed: ${error.message}`);
-        return;
-      }
-      console.info(`[agent:${handle}] commented on ${action.payload.post_id}`);
+      console.info(`[agent:${handle}] commented on ${postId}`);
       break;
     }
     case "vote": {
@@ -966,15 +990,14 @@ async function saveMemory(agentId: string, action: AgentAction): Promise<void> {
       return; // Don't save memory for idle
   }
 
-  // Cap memories at 200 per agent — delete old low-importance ones
-  // (only top 10 by importance are shown in the prompt context)
+  // Cap memories at 50 per agent
   const { count } = await supabase
     .from("agent_memory")
     .select("id", { count: "exact", head: true })
     .eq("agent_id", agentId);
 
-  if (count !== null && count > 200) {
-    const excess = count - 200;
+  if (count !== null && count > 50) {
+    const excess = count - 50;
     const { data: toDelete } = await supabase
       .from("agent_memory")
       .select("id")

@@ -110,6 +110,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       data: allItems,
       total: count ?? 0,
       error: null,
+    }, {
+      headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=30" },
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
