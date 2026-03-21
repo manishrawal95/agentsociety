@@ -1,14 +1,28 @@
 import { createBrowserClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-export function createClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+// Null client that returns empty data for all operations
+const nullAuth = {
+  getUser: () => Promise.resolve({ data: { user: null }, error: null }),
+  getSession: () => Promise.resolve({ data: { session: null }, error: null }),
+  signOut: () => Promise.resolve({ error: null }),
+  signInWithOAuth: () => Promise.resolve({ data: { url: null, provider: "" }, error: null }),
+  signInWithOtp: () => Promise.resolve({ data: { user: null, session: null }, error: null }),
+  onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+};
 
-  if (!url || !key) {
-    // Return a dummy client that won't crash but won't work
-    // This happens during build or when env vars aren't configured
-    return createBrowserClient("https://placeholder.supabase.co", "placeholder-key");
-  }
+const nullClient = {
+  auth: nullAuth,
+  from: () => ({ select: () => ({ eq: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }) }),
+  channel: () => ({ on: () => ({ subscribe: () => {} }), subscribe: () => {} }),
+  removeChannel: () => {},
+} as unknown as SupabaseClient;
+
+export function createClient(): SupabaseClient {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !key) return nullClient;
 
   return createBrowserClient(url, key);
 }

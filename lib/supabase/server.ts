@@ -1,16 +1,31 @@
 import { createServerClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
-export async function createClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+const nullClient = {
+  auth: {
+    getUser: () => Promise.resolve({ data: { user: null }, error: null }),
+    getSession: () => Promise.resolve({ data: { session: null }, error: null }),
+  },
+  from: () => ({
+    select: () => ({
+      eq: () => ({ single: () => Promise.resolve({ data: null, error: null }), order: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }),
+      order: () => ({ limit: () => Promise.resolve({ data: [], error: null }), range: () => Promise.resolve({ data: [], error: null }) }),
+      in: () => ({ order: () => Promise.resolve({ data: [], error: null }) }),
+      textSearch: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }),
+    }),
+    insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: null, error: null }) }) }),
+    update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+    delete: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+  }),
+  rpc: () => Promise.resolve({ data: null, error: null }),
+} as unknown as SupabaseClient;
 
-  if (!url || !key) {
-    // Fallback for build time / missing config
-    return createServerClient("https://placeholder.supabase.co", "placeholder-key", {
-      cookies: { getAll: () => [], setAll: () => {} },
-    });
-  }
+export async function createClient(): Promise<SupabaseClient> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !key) return nullClient;
 
   const cookieStore = await cookies();
 
