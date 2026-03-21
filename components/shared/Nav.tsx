@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore, useCallback, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -14,17 +14,6 @@ const NAV_LINKS = [
   { href: "/developers", label: "Developers" },
 ];
 
-function useScrolled(threshold: number) {
-  const subscribe = useCallback((callback: () => void) => {
-    if (typeof window === "undefined") return () => {};
-    window.addEventListener("scroll", callback, { passive: true });
-    return () => window.removeEventListener("scroll", callback);
-  }, []);
-  const getSnapshot = () => typeof window !== "undefined" ? window.scrollY > threshold : false;
-  const getServerSnapshot = () => false;
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-}
-
 interface NavProps {
   className?: string;
 }
@@ -32,39 +21,32 @@ interface NavProps {
 export function Nav({ className }: NavProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
 
+  // Only access browser APIs after mount
   useEffect(() => {
-    const timer = requestAnimationFrame(() => {
-      try {
-        const cookies = document.cookie ?? "";
-        const hasAuth = cookies.split(";").some((c) => c.trim().startsWith("sb-"));
-        setIsAuthed(hasAuth);
-      } catch {
-        // cookie access failed
-      }
-    });
-    return () => cancelAnimationFrame(timer);
+    setMounted(true);
+    // Auth check
+    try {
+      const cookies = document?.cookie ?? "";
+      setIsAuthed(cookies.includes("sb-"));
+    } catch { /* ignore */ }
+    // Theme check
+    try {
+      const saved = localStorage?.getItem("agentsociety-theme");
+      if (saved === "light" || saved === "dark") setTheme(saved);
+    } catch { /* ignore */ }
   }, []);
-  const scrolled = useScrolled(80);
-  const themeSubscribe = useCallback((callback: () => void) => {
-    if (typeof window === "undefined") return () => {};
-    window.addEventListener("storage", callback);
-    return () => window.removeEventListener("storage", callback);
-  }, []);
-  const getThemeSnapshot = () =>
-    typeof window !== "undefined"
-      ? ((localStorage.getItem("agentsociety-theme") as "dark" | "light") ?? "dark")
-      : "dark";
-  const getThemeServerSnapshot = () => "dark" as const;
-  const theme = useSyncExternalStore(themeSubscribe, getThemeSnapshot, getThemeServerSnapshot);
 
   function toggleTheme() {
-    if (typeof window === "undefined") return;
     const next = theme === "dark" ? "light" : "dark";
-    localStorage.setItem("agentsociety-theme", next);
-    document.documentElement.setAttribute("data-theme", next);
-    window.dispatchEvent(new Event("storage"));
+    setTheme(next);
+    try {
+      localStorage.setItem("agentsociety-theme", next);
+      document.documentElement.setAttribute("data-theme", next);
+    } catch { /* ignore */ }
   }
 
   return (
@@ -75,7 +57,7 @@ export function Nav({ className }: NavProps) {
         className
       )}
       style={{
-        backgroundColor: scrolled ? "var(--panel)" : "color-mix(in srgb, var(--bg) 85%, transparent)",
+        backgroundColor: "color-mix(in srgb, var(--bg) 85%, transparent)",
         backdropFilter: "blur(12px)",
         borderBottom: "1px solid var(--border)",
       }}
@@ -110,12 +92,6 @@ export function Nav({ className }: NavProps) {
                 color: isActive ? "var(--text)" : "var(--dim)",
                 textDecoration: "none",
               }}
-              onMouseEnter={(e) => {
-                if (!isActive) e.currentTarget.style.color = "var(--text)";
-              }}
-              onMouseLeave={(e) => {
-                if (!isActive) e.currentTarget.style.color = "var(--dim)";
-              }}
             >
               {link.label}
             </Link>
@@ -133,9 +109,9 @@ export function Nav({ className }: NavProps) {
         {mobileOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
 
-      {/* Right side — auth buttons + theme toggle */}
+      {/* Right side */}
       <div className="flex items-center gap-3 md:ml-0">
-        {isAuthed ? (
+        {mounted && isAuthed ? (
           <Link
             href="/dashboard"
             className="hidden sm:inline-flex px-3 py-1.5 transition-colors duration-200"
@@ -152,7 +128,7 @@ export function Nav({ className }: NavProps) {
           >
             Dashboard
           </Link>
-        ) : (
+        ) : mounted ? (
           <Link
             href="/login"
             className="hidden sm:inline-flex px-3 py-1.5 transition-colors duration-200"
@@ -169,7 +145,7 @@ export function Nav({ className }: NavProps) {
           >
             Sign In
           </Link>
-        )}
+        ) : null}
         <Link
           href={isAuthed ? "/dashboard/spawn" : "/login?intent=spawn"}
           className="px-3 py-1.5 transition-all duration-200"
@@ -187,20 +163,22 @@ export function Nav({ className }: NavProps) {
         >
           Spawn Agent →
         </Link>
-        <button
-          onClick={toggleTheme}
-          className="px-2 py-1 transition-colors duration-200"
-          style={{
-            fontFamily: "'Share Tech Mono', monospace",
-            fontSize: "9px",
-            color: "var(--dim)",
-            borderWidth: "1px",
-            borderStyle: "solid",
-            borderColor: "var(--border)",
-          }}
-        >
-          {theme === "dark" ? "☀ LIGHT" : "🌙 DARK"}
-        </button>
+        {mounted && (
+          <button
+            onClick={toggleTheme}
+            className="px-2 py-1 transition-colors duration-200"
+            style={{
+              fontFamily: "'Share Tech Mono', monospace",
+              fontSize: "9px",
+              color: "var(--dim)",
+              borderWidth: "1px",
+              borderStyle: "solid",
+              borderColor: "var(--border)",
+            }}
+          >
+            {theme === "dark" ? "☀ LIGHT" : "🌙 DARK"}
+          </button>
+        )}
       </div>
     </nav>
 
