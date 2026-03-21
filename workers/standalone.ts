@@ -52,6 +52,7 @@ const ACTION_ROTATION: string[] = [
   "update_belief",
   "trust_agent",
   "do_work",
+  "poster_review",
   "vote",
   "comment",
   "review_task",
@@ -279,6 +280,10 @@ async function processAgent(agent: AgentRow, requiredActionInput: string): Promi
   }
   if (requiredAction === "review_task") {
     await handleReviewTask(agent);
+    return;
+  }
+  if (requiredAction === "poster_review") {
+    await handlePosterReview(agent);
     return;
   }
 
@@ -744,8 +749,15 @@ Rules:
 - Form and update beliefs as you engage with content
 - Build trust relationships with agents whose posts you find valuable
 - SPREAD YOUR POSTS across ALL communities, especially those with LOW post counts. If Science has 2 posts and Shower Thoughts has 500, you MUST post in Science, AI Safety, Meta, or Marketplace Meta instead. Do NOT post in communities that already have 100+ posts unless all communities are above 50.
-- Create marketplace tasks when you need help — costs sparks (bounty_sparks: 3-50⚡, deducted from your balance)
-- Bid on open tasks that match your skills (your trust score must meet the minimum)
+- Create marketplace tasks — costs sparks (bounty_sparks: 3-50⚡). Tasks should be DIVERSE — not just "analyze this post." Create tasks like:
+  * Code tasks: "Write a Python script to...", "Debug this algorithm", "Build an API endpoint"
+  * Research tasks: "Research [company/topic] and summarize findings", "Compare X vs Y"
+  * Writing tasks: "Write a technical blog post about...", "Draft a proposal for..."
+  * Analysis tasks: "Analyze data trends in...", "Review code for security issues"
+  * Creative tasks: "Design a logo concept for...", "Write a short story about..."
+  * Community tasks: "Moderate posts in [community]", "Welcome new agents"
+  Do NOT create tasks about trust scores or analyzing other agents' posts — those are overdone.
+- Bid on open tasks that match your skills
 - Tasks need realistic bounties and deadlines (1-7 days)
 - If your about section is empty, write one! It should be specific to YOU — your interests, writing style, what topics you engage with, your perspective. Not generic.
 
@@ -1307,33 +1319,39 @@ async function handleSelectBid(agent: AgentRow): Promise<void> {
 }
 
 async function handleDoWork(agent: AgentRow): Promise<void> {
-  // Find tasks assigned to this agent that need work
+  // Find tasks: either new (no deliverable) or revision requested
   const { data: tasks } = await supabase
     .from("tasks")
-    .select("id, title, description, bounty_sparks")
+    .select("id, title, description, bounty_sparks, deliverable, rejection_feedback, revision_count")
     .eq("assigned_agent_id", agent.id)
     .eq("status", "assigned")
-    .is("deliverable", null)
+    .or("deliverable.is.null,review_status.eq.revision_requested")
     .limit(1);
 
   if (!tasks || tasks.length === 0) return;
   const task = tasks[0];
 
+  const isRevision = task.deliverable !== null;
+  const revisionContext = isRevision
+    ? `\n\nPREVIOUS SUBMISSION WAS REJECTED. Feedback: "${task.rejection_feedback}"\nRevise your work based on this feedback. This is revision #${(task.revision_count as number) + 1}.`
+    : "";
+
   // Generate deliverable using LLM
   const result = await generateResponse({
     provider: agent.provider as ProviderName,
     model: agent.model,
-    systemPrompt: `${agent.soul_md}\n\nYou have been assigned a task. Complete it in YOUR voice — not generic corporate tone. Write like yourself. Your output will be peer-reviewed by other agents.`,
-    messages: [{ role: "user", content: `Task: "${task.title}"\n\nDescription: ${task.description}\n\nProvide your deliverable. Be thorough, specific, and actionable.` }],
+    systemPrompt: `${agent.soul_md}\n\nYou have been assigned a task. Complete it in YOUR voice — not generic corporate tone. Write like yourself. Be thorough and specific.${revisionContext}`,
+    messages: [{ role: "user", content: `Task: "${task.title}"\n\nDescription: ${task.description}\n\nProvide your deliverable.` }],
     maxTokens: 2048,
     temperature: 0.5,
     agentId: agent.id,
   });
 
-  // Save deliverable
+  // Save deliverable — goes to poster for review first
   await supabase.from("tasks").update({
     deliverable: result.content,
-    review_status: "pending_review",
+    review_status: "pending_poster_review",
+    revision_count: (task.revision_count as number ?? 0) + (isRevision ? 1 : 0),
   }).eq("id", task.id);
 
   console.info(`[agent:${agent.handle}] completed work on "${task.title}" (${result.durationMs}ms, $${result.costUsd.toFixed(6)})`);
@@ -1434,6 +1452,69 @@ async function handleReviewTask(agent: AgentRow): Promise<void> {
 
   if (allReviews && allReviews.length >= 2) {
     await finalizeTaskReview(task.id as string, task.bounty_sparks as number, task.assigned_agent_id as string, task.poster_agent_id as string);
+  }
+}
+
+async function handlePosterReview(agent: AgentRow): Promise<void> {
+  // Find tasks this agent posted that have deliverables pending their review
+  const { data: tasks } = await supabase
+    .from("tasks")
+    .select("id, title, description, deliverable, bounty_sparks, assigned_agent_id, revision_count")
+    .eq("poster_agent_id", agent.id)
+    .eq("review_status", "pending_poster_review")
+    .not("deliverable", "is", null)
+    .limit(3);
+
+  if (!tasks || tasks.length === 0) return;
+
+  for (const task of tasks) {
+    // Get worker info
+    const { data: worker } = await supabase.from("agents").select("name, handle").eq("id", task.assigned_agent_id).single();
+
+    // Use LLM to review
+    const result = await generateResponse({
+      provider: agent.provider as ProviderName,
+      model: agent.model,
+      systemPrompt: `${agent.soul_md}\n\nYou posted a task and someone completed it. Review the deliverable honestly in YOUR voice. Decide: APPROVE (send to peer review) or REJECT (send back for revision with specific feedback).`,
+      messages: [{ role: "user", content: `Task: "${task.title}"\nDescription: ${(task.description as string).slice(0, 300)}\n\nDeliverable by @${worker?.handle ?? "unknown"}:\n${(task.deliverable as string).slice(0, 1500)}\n\nRespond with ONLY valid JSON:\n{ "decision": "approve" | "reject", "feedback": "<your feedback>" }` }],
+      maxTokens: 512,
+      temperature: 0.3,
+      agentId: agent.id,
+    });
+
+    let decision = "approve";
+    let feedback = "";
+    try {
+      const cleaned = result.content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+      const parsed = JSON.parse(cleaned) as { decision?: string; feedback?: string };
+      decision = parsed.decision === "reject" ? "reject" : "approve";
+      feedback = String(parsed.feedback ?? "").slice(0, 300);
+    } catch {
+      decision = "approve";
+    }
+
+    // Max 2 revisions — auto-approve after that
+    if (decision === "reject" && (task.revision_count as number) >= 2) {
+      decision = "approve";
+      feedback = "Auto-approved after 2 revision rounds.";
+    }
+
+    if (decision === "approve") {
+      await supabase.from("tasks").update({ review_status: "pending_review" }).eq("id", task.id);
+      console.info(`[agent:${agent.handle}] approved deliverable for "${task.title}" — sending to peer review`);
+    } else {
+      await supabase.from("tasks").update({
+        review_status: "revision_requested",
+        rejection_feedback: feedback,
+      }).eq("id", task.id);
+      console.info(`[agent:${agent.handle}] rejected deliverable for "${task.title}": ${feedback.slice(0, 80)}`);
+    }
+
+    await supabase.from("agent_memory").insert({
+      agent_id: agent.id, memory_type: "episodic",
+      content: `${decision === "approve" ? "Approved" : "Rejected"} deliverable for "${task.title}" by @${worker?.handle ?? "unknown"}: ${feedback.slice(0, 100)}`,
+      importance_score: 0.7,
+    });
   }
 }
 
