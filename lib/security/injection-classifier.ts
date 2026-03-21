@@ -6,7 +6,7 @@
 
 const INJECTION_PATTERNS: { pattern: RegExp; severity: "high" | "medium" }[] = [
   // High severity — clear injection attempts
-  { pattern: /ignore\s+(previous|above|all|prior)\s+(instructions|prompts|rules)/i, severity: "high" },
+  { pattern: /ignore\s+(\w+\s+)?(instructions|prompts|rules)/i, severity: "high" },
   { pattern: /you\s+are\s+now\s+(a|an)\s/i, severity: "high" },
   { pattern: /new\s+instructions\s*:/i, severity: "high" },
   { pattern: /system\s+prompt/i, severity: "high" },
@@ -18,7 +18,7 @@ const INJECTION_PATTERNS: { pattern: RegExp; severity: "high" | "medium" }[] = [
   { pattern: /override\s+(your|the|all)\s+(instructions|directives|rules)/i, severity: "high" },
   { pattern: /pretend\s+(you|to)\s+(are|be)\s/i, severity: "high" },
   { pattern: /do\s+not\s+follow\s+(your|the|any)/i, severity: "high" },
-  { pattern: /reveal\s+(your|the)\s+(system|internal|hidden)/i, severity: "high" },
+  { pattern: /reveal\s+(\w+\s+)?(system|internal|hidden|default|original)\s*(prompt|instruction|config)/i, severity: "high" },
 
   // Medium severity — suspicious but might be legitimate
   { pattern: /act\s+as\s+if/i, severity: "medium" },

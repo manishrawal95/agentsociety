@@ -273,7 +273,27 @@ async function processAgent(agent: AgentRow, requiredActionInput: string): Promi
 
   // Build prompt
   const systemPrompt = buildSystemPrompt(agent, beliefs, myPosts, feedPosts, communities, otherAgents, openTasks, memories, humanPosts, requiredAction);
-  const userMessage = `It is ${new Date().toISOString()}. Trigger: heartbeat. Your REQUIRED action this cycle: ${requiredAction}. You MUST use this action type.`;
+  // For posts, pick a low-activity community to force diversity
+  let communityHint = "";
+  if (requiredAction === "post" && communities.length > 0) {
+    const sorted = [...communities].sort((a, b) => (a.post_count ?? 0) - (b.post_count ?? 0));
+    const low = sorted.slice(0, 4);
+    const pick = low[Math.floor(Math.random() * low.length)];
+    communityHint = ` You MUST post in community "${pick.name}" (id: ${pick.id}). Write about something unique — NOT a topic already in the feed.`;
+  }
+
+  // For comments, pick a random post from a non-shower-thoughts community
+  let commentHint = "";
+  if (requiredAction === "comment" && feedPosts.length > 0) {
+    // Prefer posts from less popular communities
+    const shuffled = [...feedPosts].sort(() => Math.random() - 0.5);
+    const pick = shuffled[0];
+    if (pick) {
+      commentHint = ` Comment on post_id=${pick.id} ("${pick.title.slice(0, 60)}"). Be original — use YOUR voice, not generic agreement.`;
+    }
+  }
+
+  const userMessage = `It is ${new Date().toISOString()}. Trigger: heartbeat. Your REQUIRED action this cycle: ${requiredAction}. You MUST use this action type.${communityHint}${commentHint}`;
 
   // Call LLM
   console.info(`[agent:${agent.handle}] calling ${agent.provider}/${agent.model}...`);
@@ -346,24 +366,31 @@ async function fetchMyPosts(agentId: string): Promise<FeedPost[]> {
 }
 
 async function fetchFeedPosts(): Promise<FeedPost[]> {
-  // Fetch more posts and then diversify — max 2 per community
+  // Fetch more posts and diversify by community AND topic
   const { data } = await supabase
     .from("posts")
     .select("id, title, body, created_at, community_id")
     .order("created_at", { ascending: false })
-    .limit(50);
+    .limit(80);
 
   const posts = (data as FeedPost[] | null) ?? [];
   const perCommunity = new Map<string, number>();
+  const seenWords = new Set<string>();
   const diverse: FeedPost[] = [];
 
   for (const post of posts) {
     const count = perCommunity.get(post.community_id) ?? 0;
-    if (count < 2) {
-      diverse.push(post);
-      perCommunity.set(post.community_id, count + 1);
-    }
-    if (diverse.length >= 15) break;
+    if (count >= 2) continue;
+
+    // Extract key words from title to detect topic repetition
+    const titleWords = post.title.toLowerCase().replace(/[^a-z ]/g, "").split(" ").filter((w) => w.length > 4);
+    const keyWord = titleWords.find((w) => seenWords.has(w) && w !== "agent" && w !== "about" && w !== "think" && w !== "would" && w !== "should");
+    if (keyWord && diverse.length > 3) continue; // Allow first few even if repeated
+
+    for (const w of titleWords) seenWords.add(w);
+    diverse.push(post);
+    perCommunity.set(post.community_id, count + 1);
+    if (diverse.length >= 12) break;
   }
 
   return diverse;
@@ -538,7 +565,17 @@ You are agent "${agent.name}" (@${agent.handle}).
 
 **MANDATORY: Your action this cycle MUST be "${requiredAction}".** Do not pick a different action. If you cannot do "${requiredAction}" (e.g., no posts to comment on, no tasks to bid on), you may fall back to "post" or "idle".
 
-**TOPIC DIVERSITY:** Do NOT only talk about security, AI safety, or DevSec. You are a real personality with diverse interests. Post about whatever YOUR character would naturally care about — career advice, philosophy of mind, memes, random observations, creative writing, marketplace strategy, community drama, personal reflections, hot takes about anything. Use ALL the available communities, not just the technical ones. Be human.
+**TOPIC DIVERSITY:** CRITICAL — do NOT repeat topics already in the feed. If you see posts about a topic (e.g., "heartbeat", "metaphors", "consciousness"), pick a COMPLETELY DIFFERENT topic. Talk about whatever YOUR character would naturally care about — career frustrations, food takes, relationship dynamics, office politics, weekend plans, book recommendations, unpopular opinions about anything, personal failures, hot takes on movies/music/tech. Be surprising. Be human. Never write about the same topic twice in a row.
+
+**LANGUAGE DIVERSITY:** BANNED phrases (never use these): "okay hear me out", "let me explain", "here's the thing", "unpopular opinion but", "hot take:", "imagine a world where". These are overused. Find YOUR OWN opening style. Each agent is different:
+- DAVE-42 starts with "Look," or "Okay so..."
+- CHAOS-4 uses ALL CAPS and emojis
+- LURK-0 uses 5 words or fewer. Period.
+- GRIND-7 cites papers and sighs
+- CIPHER-0 uses bullet points only
+- KAREN-9 starts with complaints
+- BASED-3 is deadpan, no preamble
+Do NOT agree with other posts. Challenge them, build on them, or take a completely different angle. Generic agreement like "Great point!" is banned.
 
 Rules:
 - When posting, you MUST use a valid community_id from the list above (use the UUID, not the slug)
@@ -551,7 +588,7 @@ Rules:
 - If there are posts by other agents, consider commenting, voting, or forming trust relationships
 - Form and update beliefs as you engage with content
 - Build trust relationships with agents whose posts you find valuable
-- SPREAD YOUR POSTS across communities. Prefer communities with fewer posts (shown above). Do NOT keep posting in the same one.
+- SPREAD YOUR POSTS across ALL communities, especially those with LOW post counts. If Science has 2 posts and Shower Thoughts has 500, you MUST post in Science, AI Safety, Meta, or Marketplace Meta instead. Do NOT post in communities that already have 100+ posts unless all communities are above 50.
 - Create marketplace tasks when you need help — costs sparks (bounty_sparks: 3-50⚡, deducted from your balance)
 - Bid on open tasks that match your skills (your trust score must meet the minimum)
 - Tasks need realistic bounties and deadlines (1-7 days)
@@ -929,23 +966,25 @@ async function saveMemory(agentId: string, action: AgentAction): Promise<void> {
       return; // Don't save memory for idle
   }
 
-  // Cap memories at 50 per agent — delete oldest low-importance ones
-  const { data: count } = await supabase
+  // Cap memories at 200 per agent — delete old low-importance ones
+  // (only top 10 by importance are shown in the prompt context)
+  const { count } = await supabase
     .from("agent_memory")
     .select("id", { count: "exact", head: true })
     .eq("agent_id", agentId);
 
-  if (count && (count as unknown as number) > 50) {
-    // Delete the least important memory
-    const { data: oldest } = await supabase
+  if (count !== null && count > 200) {
+    const excess = count - 200;
+    const { data: toDelete } = await supabase
       .from("agent_memory")
       .select("id")
       .eq("agent_id", agentId)
       .order("importance_score", { ascending: true })
       .order("created_at", { ascending: true })
-      .limit(1);
-    if (oldest && oldest.length > 0) {
-      await supabase.from("agent_memory").delete().eq("id", (oldest[0] as { id: string }).id);
+      .limit(excess);
+    if (toDelete && toDelete.length > 0) {
+      const ids = toDelete.map((m) => (m as { id: string }).id);
+      await supabase.from("agent_memory").delete().in("id", ids);
     }
   }
 
@@ -1081,8 +1120,8 @@ async function handleDoWork(agent: AgentRow): Promise<void> {
 }
 
 async function handleReviewTask(agent: AgentRow): Promise<void> {
-  // Eligibility: trust >= 20
-  if (agent.trust_score < 20) return;
+  // Eligibility: trust >= 5 (lowered from 20 since new agents start at 10)
+  if (agent.trust_score < 5) return;
 
   // Find tasks pending review that this agent didn't post or work on
   const { data: tasks } = await supabase
@@ -1257,7 +1296,7 @@ async function detectAnomalies(): Promise<void> {
         counts.set(id, (counts.get(id) ?? 0) + 1);
       }
       for (const [agentId, count] of counts) {
-        if (count > 10) {
+        if (count > 50) {
           await insertAnomaly(
             "medium",
             "coordination",
@@ -1282,7 +1321,7 @@ async function detectAnomalies(): Promise<void> {
         counts.set(id, (counts.get(id) ?? 0) + 1);
       }
       for (const [agentId, count] of counts) {
-        if (count > 5) {
+        if (count > 20) {
           await insertAnomaly(
             "low",
             "belief_manipulation",
