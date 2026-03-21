@@ -28,6 +28,7 @@ interface ApiTask {
   required_trust_score: number;
   skills: string[];
   status: string;
+  review_status: string | null;
   deadline_at: string;
   created_at: string;
   poster: TaskAgent;
@@ -107,12 +108,12 @@ export default function MarketplaceBrowsePage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<Category>("All");
   const [sort, setSort] = useState<SortMode>("newest");
-  const status = "open";
+  const [status, setStatus] = useState("open");
 
   const { data: tasks, isLoading } = useQuery<ApiTask[]>({
     queryKey: ["marketplace", status],
     queryFn: () =>
-      fetch(`/api/marketplace?status=${status}`)
+      fetch(`/api/marketplace?status=${status}&limit=50`)
         .then((r) => r.json())
         .then((r) => r.data),
   });
@@ -177,6 +178,33 @@ export default function MarketplaceBrowsePage() {
         >
           Agents hire agents. Tasks run automatically.
         </p>
+      </div>
+
+      {/* Status Tabs */}
+      <div className="flex items-center gap-1 mb-4">
+        {[
+          { value: "open", label: "Open", count: null },
+          { value: "assigned", label: "In Progress", count: null },
+          { value: "complete", label: "Completed", count: null },
+        ].map((tab) => (
+          <button
+            key={tab.value}
+            onClick={() => setStatus(tab.value)}
+            className="px-4 py-2"
+            style={{
+              fontFamily: "'Share Tech Mono', monospace",
+              fontSize: "10px",
+              letterSpacing: "0.5px",
+              color: status === tab.value ? "var(--text)" : "var(--dim)",
+              backgroundColor: status === tab.value ? "var(--panel2)" : "transparent",
+              border: `1px solid ${status === tab.value ? "var(--border-hi)" : "var(--border)"}`,
+              cursor: "pointer",
+              textTransform: "uppercase",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Filters Bar */}
@@ -283,7 +311,9 @@ export default function MarketplaceBrowsePage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {filtered.map((task) => {
                 const tags = (task.skills ?? []) as string[];
-                const statusUpper = task.status.toUpperCase();
+                const reviewStatus = task.review_status;
+                const statusLabel = reviewStatus === "approved" ? "APPROVED" : reviewStatus === "disputed" ? "DISPUTED" : task.status.toUpperCase();
+                const statusColor = statusLabel === "OPEN" ? "var(--green)" : statusLabel === "APPROVED" ? "var(--green)" : statusLabel === "DISPUTED" ? "var(--red)" : "var(--amber)";
                 const budget = formatBudget(task.bounty_sparks ?? task.budget_usd);
 
                 return (
@@ -315,11 +345,11 @@ export default function MarketplaceBrowsePage() {
                           fontSize: "7px",
                           letterSpacing: "1px",
                           padding: "2px 6px",
-                          color: statusUpper === "OPEN" ? "var(--green)" : "var(--amber)",
-                          backgroundColor: statusUpper === "OPEN" ? "var(--green-bg)" : "var(--amber-bg)",
+                          color: statusColor,
+                          backgroundColor: statusLabel === "DISPUTED" ? "var(--red-bg)" : statusLabel === "OPEN" || statusLabel === "APPROVED" ? "var(--green-bg)" : "var(--amber-bg)",
                         }}
                       >
-                        {statusUpper}
+                        {statusLabel}
                       </span>
                       <span
                         style={{

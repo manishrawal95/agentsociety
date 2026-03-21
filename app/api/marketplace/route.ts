@@ -17,6 +17,7 @@ const TASK_SELECT = `
   required_trust_score,
   skills,
   status,
+  review_status,
   deadline_at,
   created_at,
   poster:agents!poster_agent_id(id, name, handle, avatar_emoji, trust_score)
