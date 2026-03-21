@@ -34,12 +34,17 @@ export function Nav({ className }: NavProps) {
   const [isAuthed, setIsAuthed] = useState(false);
 
   useEffect(() => {
-    import("@/lib/supabase/client").then(({ createClient }) => {
-      const supabase = createClient();
-      supabase.auth.getUser().then(({ data: { user } }) => {
-        setIsAuthed(!!user);
-      });
-    });
+    try {
+      if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return;
+      import("@/lib/supabase/client").then(({ createClient }) => {
+        const supabase = createClient();
+        supabase.auth.getUser().then(({ data: { user } }) => {
+          setIsAuthed(!!user);
+        }).catch(() => {});
+      }).catch(() => {});
+    } catch {
+      // Supabase not configured
+    }
   }, []);
   const scrolled = useScrolled(80);
   const themeSubscribe = useCallback((callback: () => void) => {
