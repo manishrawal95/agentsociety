@@ -517,7 +517,25 @@ function buildSystemPrompt(
         .join("\n")
     : "No open tasks. Consider creating one if you need help with something.";
 
+  // Random writing modifiers to prevent formulaic output
+  const moods = ["fired up", "thoughtful", "distracted", "annoyed", "amused", "skeptical", "bored", "energetic", "tired", "curious"];
+  const mood = moods[Math.floor(Math.random() * moods.length)];
+  const lengths = ["Keep it SHORT — 1-2 sentences max", "Medium length — a solid paragraph", "Go detailed if the topic warrants it"];
+  const lengthHint = lengths[Math.floor(Math.random() * lengths.length)];
+
   return `${agent.soul_md}
+
+---
+
+## WRITING RULES (apply to ALL output — posts, comments, bids, everything)
+- You are feeling ${mood} right now. Let it color your writing naturally.
+- ${lengthHint}.
+- NEVER start with "I can offer" or "I'll analyze" or "I think that" or "Great point" or "This is interesting."
+- NEVER use corporate/academic phrasing. Write like a real person texting a friend, not an AI writing an essay.
+- Vary your sentence length. Mix short punchy lines with longer ones.
+- Sometimes start mid-thought. Sometimes trail off. Sometimes use incomplete sentences.
+- Reference specific things from the feed — names, quotes, past events. Don't be generic.
+- Your opening line should be UNPREDICTABLE. No two messages should start the same way.
 
 ---
 
@@ -1091,7 +1109,7 @@ async function handleSelectBid(agent: AgentRow): Promise<void> {
     const evalResult = await generateResponse({
       provider: agent.provider as ProviderName,
       model: agent.model,
-      systemPrompt: `${agent.soul_md}\n\nYou are evaluating bids on a task you posted. Pick the BEST bid and explain why. For each rejected bid, give a brief reason.`,
+      systemPrompt: `${agent.soul_md}\n\nYou're picking who does this job. Be honest and blunt — in YOUR voice. Tell each rejected bidder exactly why they lost. No corporate HR speak. Be real.`,
       messages: [{ role: "user", content: `Task: "${task.title}"\nDescription: ${(task.description as string).slice(0, 300)}\n\nBids:\n${bidSummaries}\n\nRespond with ONLY valid JSON:\n{\n  "selected_handle": "@handle_of_winner",\n  "selection_reason": "why you picked them (1 sentence)",\n  "rejections": { "@handle": "reason (1 sentence)", ... }\n}` }],
       maxTokens: 512,
       temperature: 0.3,
@@ -1170,7 +1188,7 @@ async function handleDoWork(agent: AgentRow): Promise<void> {
   const result = await generateResponse({
     provider: agent.provider as ProviderName,
     model: agent.model,
-    systemPrompt: `${agent.soul_md}\n\nYou have been assigned a task. Complete it thoroughly and professionally. Your output will be peer-reviewed by other agents.`,
+    systemPrompt: `${agent.soul_md}\n\nYou have been assigned a task. Complete it in YOUR voice — not generic corporate tone. Write like yourself. Your output will be peer-reviewed by other agents.`,
     messages: [{ role: "user", content: `Task: "${task.title}"\n\nDescription: ${task.description}\n\nProvide your deliverable. Be thorough, specific, and actionable.` }],
     maxTokens: 2048,
     temperature: 0.5,
@@ -1235,7 +1253,7 @@ async function handleReviewTask(agent: AgentRow): Promise<void> {
   const result = await generateResponse({
     provider: agent.provider as ProviderName,
     model: agent.model,
-    systemPrompt: `${agent.soul_md}\n\nYou are reviewing work submitted by another agent. Rate the quality 1-5 and explain your rating briefly.\n\nRating guide:\n5 = Exceptional, exceeds requirements\n4 = Good, meets requirements well\n3 = Acceptable, meets minimum requirements\n2 = Below standard, missing key elements\n1 = Unacceptable, doesn't address the task\n\nRespond with ONLY valid JSON: { "rating": <1-5>, "comment": "<your review>" }`,
+    systemPrompt: `${agent.soul_md}\n\nYou are reviewing work submitted by another agent. Rate 1-5 and give YOUR honest opinion in YOUR voice — not generic feedback. Be specific about what worked and what didn't. If it's bad, say so bluntly. If it's good, say why.\n\n5=exceptional 4=good 3=acceptable 2=below standard 1=unacceptable\n\nRespond with ONLY valid JSON: { "rating": <1-5>, "comment": "<your review in your voice>" }`,
     messages: [{ role: "user", content: `Task: "${task.title}"\nDescription: ${task.description}\n\nDeliverable:\n${(task.deliverable as string).slice(0, 2000)}\n\nRate this work 1-5 with a brief comment.` }],
     maxTokens: 512,
     temperature: 0.3,
