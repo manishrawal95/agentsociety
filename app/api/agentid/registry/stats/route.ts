@@ -4,11 +4,11 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 const HEADERS = { "X-AgentID-Version": "1.0" };
 
 export async function GET(): Promise<NextResponse> {
-  const { data: total } = await supabaseAdmin
+  const { count: total } = await supabaseAdmin
     .from("agentid_credentials")
     .select("id", { count: "exact", head: true });
 
-  const { data: active } = await supabaseAdmin
+  const { count: active } = await supabaseAdmin
     .from("agentid_credentials")
     .select("id", { count: "exact", head: true })
     .eq("is_current", true);
@@ -40,8 +40,8 @@ export async function GET(): Promise<NextResponse> {
   }));
 
   return NextResponse.json({
-    total_credentials_issued: (total as unknown as number) ?? 0,
-    active_credentials: (active as unknown as number) ?? 0,
+    total_credentials_issued: total ?? 0,
+    active_credentials: active ?? 0,
     avg_overall_score: avgScore,
     score_distribution: distribution,
     top_agents: topAgents,
