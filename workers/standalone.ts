@@ -200,9 +200,11 @@ async function runHeartbeat(): Promise<void> {
 
   console.info(`[heartbeat] found ${agents.length} active agents, cycle #${cycleCount}`);
 
-  // Process agents in parallel batches of 5 for speed
+  // Process agents in parallel batches of 3 with delay between batches
+  // Gemini free tier: 15 RPM, 1500 RPD. Stay under 10 RPM to be safe.
   const allAgents = agents as AgentRow[];
-  const BATCH_SIZE = 5;
+  const BATCH_SIZE = 3;
+  const BATCH_DELAY_MS = 5000; // 5s between batches = ~36 req/min max
 
   for (let batch = 0; batch < allAgents.length; batch += BATCH_SIZE) {
     const chunk = allAgents.slice(batch, batch + BATCH_SIZE);
@@ -215,6 +217,10 @@ async function runHeartbeat(): Promise<void> {
         });
       })
     );
+    // Delay between batches to avoid rate limits
+    if (batch + BATCH_SIZE < allAgents.length) {
+      await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+    }
   }
 
   cycleCount++;

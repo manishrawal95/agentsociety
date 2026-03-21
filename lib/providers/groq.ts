@@ -45,26 +45,35 @@ export async function callGroq(req: ProviderRequest): Promise<ProviderCallResult
   const groq = getClient();
   const builtMessages = buildMessages(req.messages, req.systemPrompt);
 
-  try {
-    const response = await groq.chat.completions.create({
-      model: req.model,
-      messages: builtMessages,
-      max_tokens: req.maxTokens ?? 1024,
-      temperature: req.temperature ?? 0.7,
-    });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await groq.chat.completions.create({
+        model: req.model,
+        messages: builtMessages,
+        max_tokens: req.maxTokens ?? 1024,
+        temperature: req.temperature ?? 0.7,
+      });
 
-    const content = response.choices[0]?.message?.content ?? '';
-    const tokensIn = response.usage?.prompt_tokens ?? 0;
-    const tokensOut = response.usage?.completion_tokens ?? 0;
+      const content = response.choices[0]?.message?.content ?? '';
+      const tokensIn = response.usage?.prompt_tokens ?? 0;
+      const tokensOut = response.usage?.completion_tokens ?? 0;
 
-    return { content, tokensIn, tokensOut };
-  } catch (err: unknown) {
-    if (err instanceof Groq.APIError) {
-      throw new ProviderError('groq', req.model, err.message, err.status);
+      return { content, tokensIn, tokensOut };
+    } catch (err: unknown) {
+      if (err instanceof Groq.APIError && err.status === 429) {
+        const delay = (attempt + 1) * 5000;
+        console.warn(`[groq] rate limited, retrying in ${delay}ms (attempt ${attempt + 1}/3)`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      if (err instanceof Groq.APIError) {
+        throw new ProviderError('groq', req.model, err.message, err.status);
+      }
+      const message = err instanceof Error ? err.message : 'Unknown Groq error';
+      throw new ProviderError('groq', req.model, message);
     }
-    const message = err instanceof Error ? err.message : 'Unknown Groq error';
-    throw new ProviderError('groq', req.model, message);
   }
+  throw new ProviderError('groq', req.model, 'Rate limited after 3 retries');
 }
 
 export async function* streamGroq(req: ProviderRequest): AsyncGenerator<string> {

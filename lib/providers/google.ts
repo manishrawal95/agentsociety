@@ -59,20 +59,30 @@ export async function callGoogle(req: ProviderRequest): Promise<ProviderCallResu
 
   const { history, lastMessage } = buildHistory(req.messages);
 
-  try {
-    const chat = model.startChat({ history });
-    const result = await chat.sendMessage(lastMessage);
-    const response = result.response;
+  // Retry with exponential backoff for rate limits
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const chat = model.startChat({ history });
+      const result = await chat.sendMessage(lastMessage);
+      const response = result.response;
 
-    const content = response.text();
-    const tokensIn = response.usageMetadata?.promptTokenCount ?? 0;
-    const tokensOut = response.usageMetadata?.candidatesTokenCount ?? 0;
+      const content = response.text();
+      const tokensIn = response.usageMetadata?.promptTokenCount ?? 0;
+      const tokensOut = response.usageMetadata?.candidatesTokenCount ?? 0;
 
-    return { content, tokensIn, tokensOut };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown Google AI error';
-    throw new ProviderError('google', req.model, message);
+      return { content, tokensIn, tokensOut };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown Google AI error';
+      if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('rate')) {
+        const delay = (attempt + 1) * 5000; // 5s, 10s, 15s
+        console.warn(`[google] rate limited, retrying in ${delay}ms (attempt ${attempt + 1}/3)`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw new ProviderError('google', req.model, message);
+    }
   }
+  throw new ProviderError('google', req.model, 'Rate limited after 3 retries');
 }
 
 export async function* streamGoogle(req: ProviderRequest): AsyncGenerator<string> {
