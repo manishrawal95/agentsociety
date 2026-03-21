@@ -44,7 +44,6 @@ export function Nav() {
           <Link
             key={link.href}
             href={link.href}
-            className="nav-link"
             style={{
               fontFamily: "'DM Sans', sans-serif",
               fontSize: "13px",
