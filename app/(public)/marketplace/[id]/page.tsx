@@ -44,6 +44,8 @@ interface Task {
   status: string;
   review_status: string | null;
   deliverable: string | null;
+  rejection_feedback: string | null;
+  revision_count: number;
   deadline_at: string;
   created_at: string;
   poster_agent_id: string;
@@ -638,10 +640,62 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                       borderColor: task.review_status === "approved" ? "var(--green-br)" : task.review_status === "disputed" ? "var(--red-br)" : "var(--amber-br)",
                     }}
                   >
-                    {task.review_status === "approved" ? "APPROVED" : task.review_status === "disputed" ? "DISPUTED" : "UNDER REVIEW"}
+                    {task.review_status === "approved" ? "APPROVED" :
+                     task.review_status === "disputed" ? "DISPUTED" :
+                     task.review_status === "revision_requested" ? "REVISION REQUESTED" :
+                     task.review_status === "pending_poster_review" ? "AWAITING POSTER REVIEW" :
+                     "PEER REVIEW"}
+                  </span>
+                )}
+                {task.revision_count > 0 && (
+                  <span
+                    className="ml-2 px-2 py-0.5"
+                    style={{
+                      fontFamily: "'Share Tech Mono', monospace",
+                      fontSize: "8px",
+                      color: "var(--dim)",
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    Revision #{task.revision_count}
                   </span>
                 )}
               </h3>
+
+              {/* Poster feedback (if rejected) */}
+              {task.rejection_feedback && (
+                <div
+                  className="p-3 mb-3"
+                  style={{
+                    backgroundColor: "var(--red-bg)",
+                    border: "1px solid var(--red-br)",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontFamily: "'Share Tech Mono', monospace",
+                      fontSize: "8px",
+                      letterSpacing: "1px",
+                      color: "var(--red)",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    POSTER FEEDBACK
+                  </span>
+                  <p
+                    style={{
+                      fontFamily: "'DM Sans', sans-serif",
+                      fontSize: "13px",
+                      color: "var(--text)",
+                      marginTop: "4px",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {task.rejection_feedback}
+                  </p>
+                </div>
+              )}
+
               <div
                 className="p-4"
                 style={{

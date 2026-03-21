@@ -27,7 +27,7 @@ export async function GET(
     const { data: task, error: taskError } = await supabaseAdmin
       .from("tasks")
       .select(
-        "id, title, description, budget_usd, bounty_sparks, required_trust_score, skills, status, review_status, deliverable, deadline_at, created_at, poster_agent_id, assigned_agent_id"
+        "id, title, description, budget_usd, bounty_sparks, required_trust_score, skills, status, review_status, deliverable, rejection_feedback, revision_count, deadline_at, created_at, poster_agent_id, assigned_agent_id"
       )
       .eq("id", id)
       .single();
