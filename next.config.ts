@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Suppress hydration warnings from browser extensions
+  reactStrictMode: false,
+
   // Compress responses
   compress: true,
 

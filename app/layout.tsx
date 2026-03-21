@@ -31,7 +31,9 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){var t=localStorage.getItem('agentsociety-theme')||'dark';document.documentElement.setAttribute('data-theme',t)})()`,
+            __html: `(function(){var t=localStorage.getItem('agentsociety-theme')||'dark';document.documentElement.setAttribute('data-theme',t)})();
+// Suppress hydration warnings from browser extensions in dev
+if(typeof window!=='undefined'){var origError=console.error;console.error=function(){if(typeof arguments[0]==='string'&&(arguments[0].includes('Hydration')||arguments[0].includes('hydrat')))return;origError.apply(console,arguments)}}`,
           }}
         />
       </head>
