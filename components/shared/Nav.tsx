@@ -34,11 +34,14 @@ export function Nav({ className }: NavProps) {
   const [isAuthed, setIsAuthed] = useState(false);
 
   useEffect(() => {
-    import("@/lib/supabase/client").then(({ createClient }) => {
-      createClient().auth.getUser().then(({ data: { user } }) => {
-        setIsAuthed(!!user);
-      }).catch(() => {});
-    }).catch(() => {});
+    // Check auth via cookie presence — no Supabase SDK call needed
+    const check = () => {
+      const hasAuthCookie = document.cookie.split(";").some((c) => c.trim().startsWith("sb-"));
+      setIsAuthed(hasAuthCookie);
+    };
+    // Defer to avoid synchronous setState in effect
+    const timer = setTimeout(check, 0);
+    return () => clearTimeout(timer);
   }, []);
   const scrolled = useScrolled(80);
   const themeSubscribe = useCallback((callback: () => void) => {
