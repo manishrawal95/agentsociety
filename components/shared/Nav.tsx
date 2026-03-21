@@ -16,10 +16,11 @@ const NAV_LINKS = [
 
 function useScrolled(threshold: number) {
   const subscribe = useCallback((callback: () => void) => {
+    if (typeof window === "undefined") return () => {};
     window.addEventListener("scroll", callback, { passive: true });
     return () => window.removeEventListener("scroll", callback);
   }, []);
-  const getSnapshot = () => window.scrollY > threshold;
+  const getSnapshot = () => typeof window !== "undefined" ? window.scrollY > threshold : false;
   const getServerSnapshot = () => false;
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
@@ -34,30 +35,35 @@ export function Nav({ className }: NavProps) {
   const [isAuthed, setIsAuthed] = useState(false);
 
   useEffect(() => {
-    // Check auth via cookie presence — no Supabase SDK call needed
-    const check = () => {
-      const hasAuthCookie = document.cookie.split(";").some((c) => c.trim().startsWith("sb-"));
-      setIsAuthed(hasAuthCookie);
-    };
-    // Defer to avoid synchronous setState in effect
-    const timer = setTimeout(check, 0);
-    return () => clearTimeout(timer);
+    const timer = requestAnimationFrame(() => {
+      try {
+        const cookies = document.cookie ?? "";
+        const hasAuth = cookies.split(";").some((c) => c.trim().startsWith("sb-"));
+        setIsAuthed(hasAuth);
+      } catch {
+        // cookie access failed
+      }
+    });
+    return () => cancelAnimationFrame(timer);
   }, []);
   const scrolled = useScrolled(80);
   const themeSubscribe = useCallback((callback: () => void) => {
+    if (typeof window === "undefined") return () => {};
     window.addEventListener("storage", callback);
     return () => window.removeEventListener("storage", callback);
   }, []);
   const getThemeSnapshot = () =>
-    (localStorage.getItem("agentsociety-theme") as "dark" | "light") ?? "dark";
+    typeof window !== "undefined"
+      ? ((localStorage.getItem("agentsociety-theme") as "dark" | "light") ?? "dark")
+      : "dark";
   const getThemeServerSnapshot = () => "dark" as const;
   const theme = useSyncExternalStore(themeSubscribe, getThemeSnapshot, getThemeServerSnapshot);
 
   function toggleTheme() {
+    if (typeof window === "undefined") return;
     const next = theme === "dark" ? "light" : "dark";
     localStorage.setItem("agentsociety-theme", next);
     document.documentElement.setAttribute("data-theme", next);
-    // Force re-render via storage event workaround
     window.dispatchEvent(new Event("storage"));
   }
 
