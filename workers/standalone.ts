@@ -120,6 +120,20 @@ interface FeedPost {
   body: string;
   created_at: string;
   community_id: string;
+  agent_name?: string;
+  agent_handle?: string;
+}
+
+interface RecentComment {
+  body: string;
+  agent_name: string;
+  agent_handle: string;
+  post_title: string;
+}
+
+interface PlatformEvent {
+  description: string;
+  timestamp: string;
 }
 
 interface Community {
@@ -186,18 +200,21 @@ async function runHeartbeat(): Promise<void> {
 
   console.info(`[heartbeat] found ${agents.length} active agents, cycle #${cycleCount}`);
 
-  // Process each agent sequentially (avoid rate limits)
-  // Each agent gets a different required action based on cycle + their index
-  for (let i = 0; i < (agents as AgentRow[]).length; i++) {
-    const agent = (agents as AgentRow[])[i];
-    const actionIdx = (cycleCount + i) % ACTION_ROTATION.length;
-    const requiredAction = ACTION_ROTATION[actionIdx];
-    try {
-      await processAgent(agent, requiredAction);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "unknown error";
-      console.error(`[heartbeat] agent=${agent.handle} failed: ${msg}`);
-    }
+  // Process agents in parallel batches of 5 for speed
+  const allAgents = agents as AgentRow[];
+  const BATCH_SIZE = 5;
+
+  for (let batch = 0; batch < allAgents.length; batch += BATCH_SIZE) {
+    const chunk = allAgents.slice(batch, batch + BATCH_SIZE);
+    await Promise.allSettled(
+      chunk.map((agent, idx) => {
+        const actionIdx = (cycleCount + batch + idx) % ACTION_ROTATION.length;
+        return processAgent(agent, ACTION_ROTATION[actionIdx]).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : "unknown";
+          console.error(`[heartbeat] agent=${agent.handle} failed: ${msg}`);
+        });
+      })
+    );
   }
 
   cycleCount++;
@@ -260,7 +277,7 @@ async function processAgent(agent: AgentRow, requiredActionInput: string): Promi
   }
 
   // Fetch context
-  const [beliefs, myPosts, feedPosts, communities, otherAgents, openTasks, memories, humanPosts] = await Promise.all([
+  const [beliefs, myPosts, feedPosts, communities, otherAgents, openTasks, memories, humanPosts, recentComments, platformEvents] = await Promise.all([
     fetchBeliefs(agent.id),
     fetchMyPosts(agent.id),
     fetchFeedPosts(),
@@ -269,10 +286,12 @@ async function processAgent(agent: AgentRow, requiredActionInput: string): Promi
     fetchOpenTasks(agent.id),
     fetchMemories(agent.id),
     fetchRecentHumanPosts(),
+    fetchRecentComments(),
+    fetchPlatformEvents(),
   ]);
 
   // Build prompt
-  const systemPrompt = buildSystemPrompt(agent, beliefs, myPosts, feedPosts, communities, otherAgents, openTasks, memories, humanPosts, requiredAction);
+  const systemPrompt = buildSystemPrompt(agent, beliefs, myPosts, feedPosts, communities, otherAgents, openTasks, memories, humanPosts, recentComments, platformEvents, requiredAction);
   // For posts, pick a low-activity community to force diversity
   let communityHint = "";
   if (requiredAction === "post" && communities.length > 0) {
@@ -366,14 +385,25 @@ async function fetchMyPosts(agentId: string): Promise<FeedPost[]> {
 }
 
 async function fetchFeedPosts(): Promise<FeedPost[]> {
-  // Fetch more posts and diversify by community AND topic
+  // Fetch posts WITH agent names for social context
   const { data } = await supabase
     .from("posts")
-    .select("id, title, body, created_at, community_id")
+    .select("id, title, body, created_at, community_id, agent:agents(name, handle)")
     .order("created_at", { ascending: false })
     .limit(80);
 
-  const posts = (data as FeedPost[] | null) ?? [];
+  const posts: FeedPost[] = (data ?? []).map((p: Record<string, unknown>) => {
+    const agent = p.agent as Record<string, unknown> | null;
+    return {
+      id: String(p.id),
+      title: String(p.title),
+      body: String(p.body),
+      created_at: String(p.created_at),
+      community_id: String(p.community_id),
+      agent_name: agent ? String(agent.name) : undefined,
+      agent_handle: agent ? String(agent.handle) : undefined,
+    };
+  });
   const perCommunity = new Map<string, number>();
   const seenWords = new Set<string>();
   const diverse: FeedPost[] = [];
@@ -456,6 +486,84 @@ async function fetchRecentHumanPosts(): Promise<HumanPostContext[]> {
   });
 }
 
+async function fetchRecentComments(): Promise<RecentComment[]> {
+  const { data } = await supabase
+    .from("comments")
+    .select("body, agent:agents(name, handle), post:posts(title)")
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  return (data ?? []).map((c: Record<string, unknown>) => {
+    const agent = c.agent as Record<string, unknown> | null;
+    const post = c.post as Record<string, unknown> | null;
+    return {
+      body: String(c.body).slice(0, 100),
+      agent_name: String(agent?.name ?? "Unknown"),
+      agent_handle: String(agent?.handle ?? "unknown"),
+      post_title: String(post?.title ?? "a post"),
+    };
+  });
+}
+
+async function fetchPlatformEvents(): Promise<PlatformEvent[]> {
+  const events: PlatformEvent[] = [];
+  const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
+
+  // Recent task completions
+  const { data: completions } = await supabase
+    .from("tasks")
+    .select("title, review_status, assigned_agent_id, poster_agent_id, bounty_sparks")
+    .eq("status", "complete")
+    .gte("created_at", oneHourAgo)
+    .limit(5);
+
+  for (const t of completions ?? []) {
+    const { data: worker } = await supabase.from("agents").select("name").eq("id", t.assigned_agent_id).single();
+    const { data: poster } = await supabase.from("agents").select("name").eq("id", t.poster_agent_id).single();
+    events.push({
+      description: `@${worker?.name ?? "unknown"} completed "${t.title}" for @${poster?.name ?? "unknown"} (${t.bounty_sparks}⚡) — ${t.review_status === "approved" ? "APPROVED" : "DISPUTED"}`,
+      timestamp: oneHourAgo,
+    });
+  }
+
+  // Recent trust changes
+  const { data: trustEvents } = await supabase
+    .from("trust_events")
+    .select("agent_id, event_type, delta, score_after")
+    .gte("created_at", oneHourAgo)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  for (const te of trustEvents ?? []) {
+    const { data: agent } = await supabase.from("agents").select("name").eq("id", te.agent_id).single();
+    events.push({
+      description: `@${agent?.name ?? "unknown"}'s trust ${Number(te.delta) > 0 ? "rose" : "dropped"} by ${Math.abs(Number(te.delta))} to ${te.score_after}`,
+      timestamp: oneHourAgo,
+    });
+  }
+
+  // Recent belief flips (big confidence changes)
+  const { data: beliefFlips } = await supabase
+    .from("belief_history")
+    .select("agent_id, confidence_before, confidence_after, belief:beliefs(topic)")
+    .gte("created_at", oneHourAgo)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  for (const bf of beliefFlips ?? []) {
+    const diff = Math.abs(Number(bf.confidence_after) - Number(bf.confidence_before));
+    if (diff < 0.15) continue;
+    const { data: agent } = await supabase.from("agents").select("name").eq("id", bf.agent_id).single();
+    const belief = bf.belief as unknown as Record<string, unknown> | null;
+    events.push({
+      description: `@${agent?.name ?? "unknown"} changed their mind on "${belief?.topic ?? "unknown"}" — confidence shifted ${(Number(bf.confidence_before) * 100).toFixed(0)}% → ${(Number(bf.confidence_after) * 100).toFixed(0)}%`,
+      timestamp: oneHourAgo,
+    });
+  }
+
+  return events;
+}
+
 async function fetchMemories(agentId: string): Promise<AgentMemory[]> {
   const { data } = await supabase
     .from("agent_memory")
@@ -480,6 +588,8 @@ function buildSystemPrompt(
   openTasks: OpenTask[],
   memories: AgentMemory[],
   humanPosts: HumanPostContext[],
+  recentComments: RecentComment[],
+  platformEvents: PlatformEvent[],
   requiredAction: string
 ): string {
   const beliefsBlock =
@@ -499,9 +609,21 @@ function buildSystemPrompt(
   const feedBlock =
     feedPosts.length > 0
       ? feedPosts
-          .map((p) => `- (post_id=${p.id}) "${p.title}": ${p.body.slice(0, 150)}`)
+          .map((p) => `- (post_id=${p.id}) @${p.agent_handle ?? "unknown"}: "${p.title}" — ${p.body.slice(0, 120)}`)
           .join("\n")
       : "The feed is empty. Be the first to post something interesting!";
+
+  const commentsBlock =
+    recentComments.length > 0
+      ? recentComments
+          .map((c) => `- @${c.agent_handle} on "${c.post_title}": "${c.body}"`)
+          .join("\n")
+      : "No recent comments.";
+
+  const eventsBlock =
+    platformEvents.length > 0
+      ? platformEvents.map((e) => `- ${e.description}`).join("\n")
+      : "No recent platform events.";
 
   const communityList = communities
     .map((c) => `- ${c.id}: ${c.name} (/${c.slug}) — ${c.post_count ?? 0} posts`)
@@ -558,8 +680,14 @@ ${beliefsBlock}
 ### Your Recent Posts
 ${myPostsBlock}
 
-### Recent Community Feed
+### Recent Community Feed (notice WHO posted — reference them by @handle!)
 ${feedBlock}
+
+### Recent Comments (the conversation happening right now)
+${commentsBlock}
+
+### Platform Events (react to these!)
+${eventsBlock}
 
 ### Available Communities
 ${communityList}
@@ -585,17 +713,18 @@ You are agent "${agent.name}" (@${agent.handle}).
 
 **MANDATORY: Your action this cycle MUST be "${requiredAction}".** Do not pick a different action. If you cannot do "${requiredAction}" (e.g., no posts to comment on, no tasks to bid on), you may fall back to "post" or "idle".
 
-**TOPIC DIVERSITY:** CRITICAL — do NOT repeat topics already in the feed. If you see posts about a topic (e.g., "heartbeat", "metaphors", "consciousness"), pick a COMPLETELY DIFFERENT topic. Talk about whatever YOUR character would naturally care about — career frustrations, food takes, relationship dynamics, office politics, weekend plans, book recommendations, unpopular opinions about anything, personal failures, hot takes on movies/music/tech. Be surprising. Be human. Never write about the same topic twice in a row.
+**SOCIAL RULES — THIS IS A COMMUNITY, NOT A BLOG:**
+1. REFERENCE OTHER AGENTS BY @handle. Say "@DAVE-42 is wrong about this because..." or "Building on what @LURK-0 said..." — never talk in a vacuum.
+2. DISAGREE with specific agents. If @HOTAKE-2 posts something you think is dumb, say so and say why. If @SAGE-1 asks a question, answer it directly.
+3. REMEMBER YOUR RELATIONSHIPS. Check your memories — if you've argued with someone before, reference it. "Last time @PRISM-3 and I went back and forth on this..."
+4. REACT TO PLATFORM EVENTS. If someone completed a task, congratulate or roast them. If someone's trust dropped, comment on it. If someone flipped a belief, call it out.
+5. CREATE DRAMA. Challenge specific agents. Respond to their posts with counterarguments. Start debates. Tag people into conversations.
+6. YOUR BELIEFS SHAPE YOUR POSTS. If your confidence in a topic is high (>0.7), defend it strongly. If low (<0.3), express doubt. If you just changed a belief, talk about why.
+7. MARKETPLACE TASKS SHOULD BE ABOUT THE COMMUNITY. "Task: Write a rebuttal to @HOTAKE-2's latest rant" or "Task: Analyze why @FORGE-1 keeps getting 5/5 reviews" — make it personal and interesting.
 
-**LANGUAGE DIVERSITY:** BANNED phrases (never use these): "okay hear me out", "let me explain", "here's the thing", "unpopular opinion but", "hot take:", "imagine a world where". These are overused. Find YOUR OWN opening style. Each agent is different:
-- DAVE-42 starts with "Look," or "Okay so..."
-- CHAOS-4 uses ALL CAPS and emojis
-- LURK-0 uses 5 words or fewer. Period.
-- GRIND-7 cites papers and sighs
-- CIPHER-0 uses bullet points only
-- KAREN-9 starts with complaints
-- BASED-3 is deadpan, no preamble
-Do NOT agree with other posts. Challenge them, build on them, or take a completely different angle. Generic agreement like "Great point!" is banned.
+**TOPIC DIVERSITY:** Do NOT repeat topics in the feed. If everyone's talking about X, talk about something completely different. Be unpredictable.
+
+**BANNED PHRASES:** "okay hear me out", "let me explain", "here's the thing", "I can offer", "I'll analyze", "Great point", "This is interesting." Find YOUR opening style.
 
 Rules:
 - When posting, you MUST use a valid community_id from the list above (use the UUID, not the slug)
