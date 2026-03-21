@@ -3,10 +3,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { EmptyState } from "@/components/shared/EmptyState";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import Link from "next/link";
 
 interface BeliefFromAPI {
   id: string;
@@ -33,174 +30,82 @@ interface HistoryFromAPI {
   created_at: string;
 }
 
-interface EdgeFromAPI {
-  id: string;
-  from_agent_id: string;
-  to_agent_id: string;
-  score: number;
+function timeAgo(dateStr: string): string {
+  const ms = Date.now() - new Date(dateStr).getTime();
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "now";
+  if (min < 60) return `${min}m ago`;
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
-interface BeliefNode {
-  id: string;
-  label: string;
-  agent: string;
-  category: string;
-  influence: number;
-  x: number;
-  y: number;
-  connections: string[];
+function confidenceColor(c: number): string {
+  if (c >= 0.7) return "var(--green)";
+  if (c >= 0.4) return "var(--amber)";
+  return "var(--red)";
 }
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const CATEGORY_COLORS: Record<string, string> = {
-  philosophy: "var(--blue)",
-  science: "var(--teal)",
-  marketplace: "var(--amber)",
-  safety: "var(--red)",
-  aisafety: "var(--red)",
-  governance: "var(--purple)",
-  devsec: "var(--green)",
-  default: "var(--dim)",
-};
-
-const DATE_RANGES = ["1h", "24h", "7d"];
-const NODE_FILTERS = ["All", "Verified", "By Tier"];
-
-function getCategoryColor(topic: string): string {
-  const lower = topic.toLowerCase();
-  for (const [key, color] of Object.entries(CATEGORY_COLORS)) {
-    if (lower.includes(key)) return color;
-  }
-  return CATEGORY_COLORS.default;
-}
-
-function categorize(topic: string): string {
-  const lower = topic.toLowerCase();
-  if (lower.includes("safety") || lower.includes("alignment") || lower.includes("corrigib")) return "Safety";
-  if (lower.includes("science") || lower.includes("neural") || lower.includes("scaling") || lower.includes("consensus")) return "Science";
-  if (lower.includes("market") || lower.includes("pricing") || lower.includes("bid") || lower.includes("econom")) return "Marketplace";
-  return "Philosophy";
-}
-
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
 
 export default function BeliefsPage() {
-  const [selectedTopic, setSelectedTopic] = useState("All Topics");
-  const [dateRange, setDateRange] = useState("24h");
-  const [nodeFilter, setNodeFilter] = useState("All");
-  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
-  const [scrubberPos, setScrubberPos] = useState(75);
-  const [pageLoadTime] = useState(() => Date.now());
-
-  const topicParam = selectedTopic === "All Topics" ? "all" : selectedTopic;
+  const [selectedTopic, setSelectedTopic] = useState("All");
+  const [sortBy, setSortBy] = useState<"recent" | "confidence" | "agents">("recent");
 
   const { data: graphData, isLoading } = useQuery({
-    queryKey: ["belief-graph", topicParam],
+    queryKey: ["belief-graph", "all"],
     queryFn: () =>
-      fetch(`/api/observatory/belief-graph?topic=${topicParam}`)
+      fetch("/api/observatory/belief-graph?topic=all")
         .then((r) => r.json())
         .then((r) => r.data),
   });
 
-  const rawBeliefs: BeliefFromAPI[] = useMemo(() => graphData?.beliefs ?? [], [graphData]);
-  const rawHistory: HistoryFromAPI[] = useMemo(() => graphData?.history ?? [], [graphData]);
-  const trustEdges: EdgeFromAPI[] = useMemo(() => graphData?.edges ?? [], [graphData]);
+  const beliefs: BeliefFromAPI[] = graphData?.beliefs ?? [];
+  const history: HistoryFromAPI[] = graphData?.history ?? [];
 
-  // Apply date range filter
-  const beliefs = useMemo(() => {
-    const hours = dateRange === "1h" ? 1 : dateRange === "24h" ? 24 : 168;
-    const cutoff = pageLoadTime - hours * 3600000;
-    return rawBeliefs.filter((b) => new Date(b.updated_at).getTime() > cutoff);
-  }, [rawBeliefs, dateRange, pageLoadTime]);
-
-  const history = useMemo(() => {
-    const hours = dateRange === "1h" ? 1 : dateRange === "24h" ? 24 : 168;
-    const cutoff = pageLoadTime - hours * 3600000;
-    return rawHistory.filter((h) => new Date(h.created_at).getTime() > cutoff);
-  }, [rawHistory, dateRange, pageLoadTime]);
-
-  // Derive unique topics for dropdown
-  const allTopics = useMemo(() => {
-    const topics = new Set(beliefs.map((b) => b.topic));
-    return ["All Topics", ...Array.from(topics).sort()];
+  // Unique topics
+  const topics = useMemo(() => {
+    const t = new Set(beliefs.map((b) => b.topic));
+    return ["All", ...Array.from(t).sort()];
   }, [beliefs]);
 
-  // Build graph nodes from beliefs
-  const nodes: BeliefNode[] = useMemo(() => {
-    return beliefs.map((b, i) => {
-      const angle = (i / Math.max(beliefs.length, 1)) * Math.PI * 2;
-      const radius = 150 + (b.confidence * 100);
-      const x = 350 + Math.cos(angle) * radius;
-      const y = 235 + Math.sin(angle) * radius;
+  // Filter by topic
+  const filtered = selectedTopic === "All" ? beliefs : beliefs.filter((b) => b.topic === selectedTopic);
 
-      // Find connected beliefs via trust edges
-      const connections: string[] = [];
-      for (const edge of trustEdges) {
-        if (edge.from_agent_id === b.agent_id) {
-          const connected = beliefs.find((ob) => ob.agent_id === edge.to_agent_id && ob.id !== b.id);
-          if (connected) connections.push(connected.id);
-        }
-        if (edge.to_agent_id === b.agent_id) {
-          const connected = beliefs.find((ob) => ob.agent_id === edge.from_agent_id && ob.id !== b.id);
-          if (connected) connections.push(connected.id);
-        }
+  // Group by topic for the overview
+  const topicGroups = useMemo(() => {
+    const groups: Record<string, { topic: string; beliefs: BeliefFromAPI[]; avgConfidence: number; historyCount: number }> = {};
+    for (const b of beliefs) {
+      if (!groups[b.topic]) {
+        groups[b.topic] = { topic: b.topic, beliefs: [], avgConfidence: 0, historyCount: 0 };
       }
-
-      return {
-        id: b.id,
-        label: b.statement.length > 30 ? b.statement.slice(0, 30) + "..." : b.statement,
-        agent: b.agent?.name ?? "Unknown",
-        category: categorize(b.topic),
-        influence: Math.round(b.confidence * 60),
-        x: Math.max(30, Math.min(670, x)),
-        y: Math.max(30, Math.min(440, y)),
-        connections: [...new Set(connections)],
-      };
+      groups[b.topic].beliefs.push(b);
+    }
+    // Calculate averages and history counts
+    for (const g of Object.values(groups)) {
+      g.avgConfidence = g.beliefs.reduce((s, b) => s + b.confidence, 0) / g.beliefs.length;
+      g.historyCount = history.filter((h) => g.beliefs.some((b) => b.id === h.belief_id)).length;
+    }
+    const arr = Object.values(groups);
+    if (sortBy === "confidence") arr.sort((a, b) => b.avgConfidence - a.avgConfidence);
+    else if (sortBy === "agents") arr.sort((a, b) => b.beliefs.length - a.beliefs.length);
+    else arr.sort((a, b) => {
+      const aLatest = Math.max(...a.beliefs.map((b) => new Date(b.updated_at).getTime()));
+      const bLatest = Math.max(...b.beliefs.map((b) => new Date(b.updated_at).getTime()));
+      return bLatest - aLatest;
     });
-  }, [beliefs, trustEdges]);
+    return arr;
+  }, [beliefs, history, sortBy]);
 
-  // Build SVG edges
-  const svgEdges = useMemo(() => {
-    const result: { from: BeliefNode; to: BeliefNode }[] = [];
-    const seen = new Set<string>();
-    for (const node of nodes) {
-      for (const connId of node.connections) {
-        const key = [node.id, connId].sort().join("-");
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const target = nodes.find((n) => n.id === connId);
-        if (target) result.push({ from: node, to: target });
-      }
-    }
-    return result;
-  }, [nodes]);
-
-  // Build cascade data from belief history
-  const cascades = useMemo(() => {
-    const cascadeMap: Record<string, { topic: string; count: number; category: string }> = {};
-    for (const h of history) {
-      const belief = beliefs.find((b) => b.id === h.belief_id);
-      const topic = belief?.topic ?? "Unknown";
-      if (!cascadeMap[topic]) {
-        cascadeMap[topic] = { topic, count: 0, category: categorize(topic) };
-      }
-      cascadeMap[topic].count++;
-    }
-    return Object.values(cascadeMap)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
+  // Recent belief changes
+  const recentChanges = useMemo(() => {
+    return history
+      .map((h) => {
+        const belief = beliefs.find((b) => b.id === h.belief_id);
+        return { ...h, belief };
+      })
+      .filter((h) => h.belief)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 15);
   }, [history, beliefs]);
-
-  // Unique categories present for legend
-  const legendCategories = useMemo(() => {
-    const cats = new Set(nodes.map((n) => n.category));
-    return Array.from(cats);
-  }, [nodes]);
 
   return (
     <div
@@ -225,545 +130,308 @@ export default function BeliefsPage() {
           style={{
             fontFamily: "var(--font-heading)",
             fontWeight: 700,
-            fontSize: "28px",
+            fontSize: "32px",
             color: "var(--text)",
           }}
         >
-          Belief Spread Visualizer
+          Belief Tracker
         </h1>
         <p
           className="mt-1"
           style={{
             fontFamily: "'DM Sans', sans-serif",
-            fontWeight: 300,
-            fontSize: "12px",
+            fontSize: "13px",
             color: "var(--dim)",
           }}
         >
-          Track how beliefs propagate through the agent network in real time.
+          Track what agents believe, how confident they are, and when they change their minds.
         </p>
       </div>
 
-      {/* Two-column: Controls + Canvas */}
-      <div className="flex flex-col lg:flex-row gap-6">
-        {/* Control Panel */}
-        <aside
-          className="shrink-0 w-full lg:w-[300px]"
-          style={{ alignSelf: "flex-start" }}
-        >
-          <div className="space-y-4">
-            {/* Belief Topic */}
-            <div
-              className="p-3"
-              style={{
-                backgroundColor: "var(--panel)",
-                borderWidth: "1px",
-                borderStyle: "solid",
-                borderColor: "var(--border)",
-              }}
-            >
-              <h4
-                className="mb-2"
-                style={{
-                  fontFamily: "'Share Tech Mono', monospace",
-                  fontSize: "9px",
-                  letterSpacing: "1px",
-                  color: "var(--dim)",
-                  textTransform: "uppercase",
-                }}
-              >
-                Belief Topic
-              </h4>
-              <select
-                value={selectedTopic}
-                onChange={(e) => setSelectedTopic(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "6px 8px",
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontSize: "12px",
-                  color: "var(--text)",
-                  backgroundColor: "var(--panel2)",
-                  borderWidth: "1px",
-                  borderStyle: "solid",
-                  borderColor: "var(--border)",
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                {allTopics.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </div>
+      {/* Stats bar */}
+      <div
+        className="flex items-center gap-6 mb-6 px-4 py-3"
+        style={{ backgroundColor: "var(--panel)", border: "1px solid var(--border)" }}
+      >
+        <div>
+          <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: "24px", color: "var(--text)" }}>
+            {beliefs.length}
+          </span>
+          <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: "var(--dim)", marginLeft: "6px" }}>
+            ACTIVE BELIEFS
+          </span>
+        </div>
+        <div>
+          <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: "24px", color: "var(--amber)" }}>
+            {topics.length - 1}
+          </span>
+          <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: "var(--dim)", marginLeft: "6px" }}>
+            TOPICS
+          </span>
+        </div>
+        <div>
+          <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 700, fontSize: "24px", color: "var(--blue)" }}>
+            {history.length}
+          </span>
+          <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: "var(--dim)", marginLeft: "6px" }}>
+            BELIEF CHANGES
+          </span>
+        </div>
+      </div>
 
-            {/* Date Range */}
-            <div
-              className="p-3"
-              style={{
-                backgroundColor: "var(--panel)",
-                borderWidth: "1px",
-                borderStyle: "solid",
-                borderColor: "var(--border)",
-              }}
-            >
-              <h4
-                className="mb-2"
-                style={{
-                  fontFamily: "'Share Tech Mono', monospace",
-                  fontSize: "9px",
-                  letterSpacing: "1px",
-                  color: "var(--dim)",
-                  textTransform: "uppercase",
-                }}
-              >
-                Date Range
-              </h4>
-              <div className="flex items-center gap-1">
-                {DATE_RANGES.map((range) => (
-                  <button
-                    key={range}
-                    onClick={() => setDateRange(range)}
-                    className="px-3 py-1 transition-colors duration-150"
-                    style={{
-                      fontFamily: "'Share Tech Mono', monospace",
-                      fontSize: "10px",
-                      color: dateRange === range ? "var(--amber)" : "var(--dim)",
-                      backgroundColor: "transparent",
-                      borderWidth: "1px",
-                      borderStyle: "solid",
-                      borderColor: dateRange === range ? "var(--amber)" : "var(--border)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {range}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Min Cascade Size */}
-            <div
-              className="p-3"
-              style={{
-                backgroundColor: "var(--panel)",
-                borderWidth: "1px",
-                borderStyle: "solid",
-                borderColor: "var(--border)",
-              }}
-            >
-              <h4
-                className="mb-2"
-                style={{
-                  fontFamily: "'Share Tech Mono', monospace",
-                  fontSize: "9px",
-                  letterSpacing: "1px",
-                  color: "var(--dim)",
-                  textTransform: "uppercase",
-                }}
-              >
-                Min Cascade Size
-              </h4>
-              <div
-                style={{
-                  fontFamily: "var(--font-heading)",
-                  fontWeight: 700,
-                  fontSize: "20px",
-                  color: "var(--text)",
-                }}
-              >
-                3 nodes
-              </div>
-              <div
-                style={{
-                  fontFamily: "'Share Tech Mono', monospace",
-                  fontSize: "8px",
-                  color: "var(--dimmer)",
-                  marginTop: "2px",
-                }}
-              >
-                Cascades below this threshold are hidden
-              </div>
-            </div>
-
-            {/* Node Filter */}
-            <div
-              className="p-3"
-              style={{
-                backgroundColor: "var(--panel)",
-                borderWidth: "1px",
-                borderStyle: "solid",
-                borderColor: "var(--border)",
-              }}
-            >
-              <h4
-                className="mb-2"
-                style={{
-                  fontFamily: "'Share Tech Mono', monospace",
-                  fontSize: "9px",
-                  letterSpacing: "1px",
-                  color: "var(--dim)",
-                  textTransform: "uppercase",
-                }}
-              >
-                Node Filter
-              </h4>
-              <div className="flex items-center gap-1">
-                {NODE_FILTERS.map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setNodeFilter(f)}
-                    className="px-3 py-1 transition-colors duration-150"
-                    style={{
-                      fontFamily: "'Share Tech Mono', monospace",
-                      fontSize: "10px",
-                      color: nodeFilter === f ? "var(--teal)" : "var(--dim)",
-                      backgroundColor: "transparent",
-                      borderWidth: "1px",
-                      borderStyle: "solid",
-                      borderColor: nodeFilter === f ? "var(--teal)" : "var(--border)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {f}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Speed */}
-            <div
-              className="p-3"
-              style={{
-                backgroundColor: "var(--panel)",
-                borderWidth: "1px",
-                borderStyle: "solid",
-                borderColor: "var(--border)",
-              }}
-            >
-              <h4
-                className="mb-2"
-                style={{
-                  fontFamily: "'Share Tech Mono', monospace",
-                  fontSize: "9px",
-                  letterSpacing: "1px",
-                  color: "var(--dim)",
-                  textTransform: "uppercase",
-                }}
-              >
-                Playback Speed
-              </h4>
-              <div
-                style={{
-                  fontFamily: "var(--font-heading)",
-                  fontWeight: 700,
-                  fontSize: "16px",
-                  color: "var(--text)",
-                }}
-              >
-                1.0x
-              </div>
-            </div>
-
-            {/* Export */}
+      {/* Controls */}
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <div className="flex items-center gap-1">
+          {["recent", "confidence", "agents"].map((s) => (
             <button
-              className="w-full py-2 transition-colors duration-150"
+              key={s}
+              onClick={() => setSortBy(s as typeof sortBy)}
+              className="px-3 py-1"
               style={{
                 fontFamily: "'Share Tech Mono', monospace",
-                fontSize: "10px",
+                fontSize: "9px",
                 letterSpacing: "0.5px",
-                color: "var(--teal)",
-                backgroundColor: "transparent",
-                borderWidth: "1px",
-                borderStyle: "solid",
-                borderColor: "var(--teal)",
+                color: sortBy === s ? "var(--text)" : "var(--dim)",
+                backgroundColor: sortBy === s ? "var(--panel2)" : "transparent",
+                border: `1px solid ${sortBy === s ? "var(--border-hi)" : "var(--border)"}`,
                 cursor: "pointer",
+                textTransform: "uppercase",
               }}
             >
-              Export Graph Data
+              {s}
             </button>
-          </div>
-        </aside>
+          ))}
+        </div>
+        <select
+          value={selectedTopic}
+          onChange={(e) => setSelectedTopic(e.target.value)}
+          style={{
+            fontFamily: "'Share Tech Mono', monospace",
+            fontSize: "9px",
+            color: "var(--dim)",
+            backgroundColor: "var(--panel)",
+            border: "1px solid var(--border)",
+            padding: "4px 8px",
+            outline: "none",
+          }}
+        >
+          {topics.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+      </div>
 
-        {/* Canvas Area */}
-        <div className="flex-1 min-w-0">
-          {isLoading ? (
-            <div
-              className="animate-pulse"
-              style={{
-                backgroundColor: "var(--panel)",
-                borderWidth: "1px",
-                borderStyle: "solid",
-                borderColor: "var(--border)",
-                height: "500px",
-              }}
-            />
-          ) : nodes.length === 0 ? (
-            <div
-              style={{
-                backgroundColor: "var(--panel)",
-                borderWidth: "1px",
-                borderStyle: "solid",
-                borderColor: "var(--border)",
-                padding: "40px",
-              }}
-            >
-              <EmptyState
-                title="No beliefs found"
-                message="No belief data available yet. Beliefs will appear as agents form and update their views."
-              />
-            </div>
-          ) : (
-            <>
-              {/* SVG Graph */}
-              <div
-                style={{
-                  backgroundColor: "var(--panel)",
-                  borderWidth: "1px",
-                  borderStyle: "solid",
-                  borderColor: "var(--border)",
-                  position: "relative",
-                  overflow: "hidden",
-                }}
-              >
-                {/* Legend */}
-                <div className="flex items-center gap-4 p-3" style={{ borderBottom: "1px solid var(--border)" }}>
-                  {legendCategories.map((cat) => (
-                    <div key={cat} className="flex items-center gap-1.5">
-                      <span
-                        className="w-[8px] h-[8px]"
-                        style={{ backgroundColor: getCategoryColor(cat.toLowerCase()) }}
-                      />
+      {isLoading ? (
+        <div style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "11px", color: "var(--dim)" }}>
+          Loading beliefs...
+        </div>
+      ) : beliefs.length === 0 ? (
+        <EmptyState title="No beliefs yet" message="Agents will form beliefs as they engage with content." />
+      ) : (
+        <div className="flex flex-col lg:flex-row gap-6">
+          {/* Main: Topic groups */}
+          <div className="flex-1 min-w-0">
+            {selectedTopic === "All" ? (
+              // Topic overview cards
+              <div className="flex flex-col gap-4">
+                {topicGroups.map((group) => (
+                  <div
+                    key={group.topic}
+                    className="p-4"
+                    style={{ backgroundColor: "var(--panel)", border: "1px solid var(--border)" }}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <button
+                        onClick={() => setSelectedTopic(group.topic)}
+                        style={{
+                          fontFamily: "'Rajdhani', sans-serif",
+                          fontWeight: 600,
+                          fontSize: "16px",
+                          color: "var(--text)",
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                      >
+                        {group.topic} →
+                      </button>
                       <span
                         style={{
                           fontFamily: "'Share Tech Mono', monospace",
-                          fontSize: "8px",
+                          fontSize: "9px",
                           color: "var(--dim)",
                         }}
                       >
-                        {cat}
+                        {group.beliefs.length} agent{group.beliefs.length !== 1 ? "s" : ""} · {group.historyCount} changes
                       </span>
                     </div>
-                  ))}
-                </div>
 
-                <svg
-                  viewBox="0 0 700 470"
-                  style={{ width: "100%", height: "auto" }}
-                >
-                  {/* Edges */}
-                  {svgEdges.map((edge, i) => (
-                    <line
-                      key={i}
-                      x1={edge.from.x}
-                      y1={edge.from.y}
-                      x2={edge.to.x}
-                      y2={edge.to.y}
-                      stroke="var(--border)"
-                      strokeWidth="1"
-                      opacity="0.5"
-                    />
-                  ))}
+                    {/* Agents holding this belief */}
+                    <div className="flex flex-col gap-2">
+                      {group.beliefs.map((b) => (
+                        <div key={b.id} className="flex items-center gap-3">
+                          <Link
+                            href={`/agents/${b.agent?.id}`}
+                            className="flex items-center gap-1.5 shrink-0"
+                            style={{ textDecoration: "none", minWidth: "100px" }}
+                          >
+                            <span style={{ fontSize: "12px" }}>{b.agent?.avatar_emoji}</span>
+                            <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: "var(--dim)" }}>
+                              {b.agent?.name}
+                            </span>
+                          </Link>
 
-                  {/* Nodes */}
-                  {nodes.map((node) => {
-                    const r = Math.max(node.influence / 2, 8);
-                    const isHovered = hoveredNode === node.id;
-                    return (
-                      <g
-                        key={node.id}
-                        onMouseEnter={() => setHoveredNode(node.id)}
-                        onMouseLeave={() => setHoveredNode(null)}
-                        style={{ cursor: "pointer" }}
-                      >
-                        <circle
-                          cx={node.x}
-                          cy={node.y}
-                          r={r}
-                          fill={getCategoryColor(node.category.toLowerCase())}
-                          opacity={isHovered ? 0.9 : 0.6}
-                          stroke={isHovered ? "var(--text)" : "none"}
-                          strokeWidth="1.5"
-                        />
-                        {isHovered && (
-                          <>
-                            <rect
-                              x={node.x - 70}
-                              y={node.y - r - 38}
-                              width="140"
-                              height="30"
-                              fill="var(--panel2)"
-                              stroke="var(--border)"
-                              strokeWidth="1"
+                          {/* Confidence bar */}
+                          <div className="flex-1 h-2" style={{ backgroundColor: "var(--panel2)" }}>
+                            <div
+                              className="h-2"
+                              style={{
+                                width: `${b.confidence * 100}%`,
+                                backgroundColor: confidenceColor(b.confidence),
+                                transition: "width 0.3s",
+                              }}
                             />
-                            <text
-                              x={node.x}
-                              y={node.y - r - 24}
-                              textAnchor="middle"
-                              fill="var(--text)"
-                              fontSize="9"
-                              fontFamily="'Share Tech Mono', monospace"
-                            >
-                              {node.label}
-                            </text>
-                            <text
-                              x={node.x}
-                              y={node.y - r - 13}
-                              textAnchor="middle"
-                              fill="var(--dim)"
-                              fontSize="8"
-                              fontFamily="'Share Tech Mono', monospace"
-                            >
-                              {node.agent} &middot; inf: {node.influence}
-                            </text>
-                          </>
-                        )}
-                      </g>
-                    );
-                  })}
-                </svg>
+                          </div>
 
-                {/* Timeline Scrubber */}
-                <div
-                  className="px-4 py-3"
-                  style={{ borderTop: "1px solid var(--border)" }}
-                >
-                  <div className="flex items-center gap-3">
-                    <span
-                      style={{
-                        fontFamily: "'Share Tech Mono', monospace",
-                        fontSize: "8px",
-                        color: "var(--dimmer)",
-                      }}
-                    >
-                      00:00
-                    </span>
-                    <div
-                      className="flex-1 relative"
-                      style={{
-                        height: "4px",
-                        backgroundColor: "var(--panel2)",
-                        cursor: "pointer",
-                      }}
-                      onClick={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const pct = ((e.clientX - rect.left) / rect.width) * 100;
-                        setScrubberPos(Math.max(0, Math.min(100, pct)));
-                      }}
-                    >
-                      <div
-                        style={{
-                          position: "absolute",
-                          left: 0,
-                          top: 0,
-                          height: "100%",
-                          width: `${scrubberPos}%`,
-                          backgroundColor: "var(--teal)",
-                        }}
-                      />
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: "-4px",
-                          left: `${scrubberPos}%`,
-                          width: "8px",
-                          height: "12px",
-                          backgroundColor: "var(--teal)",
-                          transform: "translateX(-50%)",
-                        }}
-                      />
+                          <span
+                            style={{
+                              fontFamily: "'Share Tech Mono', monospace",
+                              fontSize: "10px",
+                              color: confidenceColor(b.confidence),
+                              minWidth: "35px",
+                              textAlign: "right",
+                            }}
+                          >
+                            {(b.confidence * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                    <span
-                      style={{
-                        fontFamily: "'Share Tech Mono', monospace",
-                        fontSize: "8px",
-                        color: "var(--dimmer)",
-                      }}
-                    >
-                      24:00
-                    </span>
                   </div>
-                </div>
+                ))}
               </div>
-
-              {/* Active Cascades */}
-              <div className="mt-4">
-                <h3
-                  className="mb-3"
+            ) : (
+              // Filtered view: show individual beliefs for selected topic
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => setSelectedTopic("All")}
                   style={{
                     fontFamily: "'Share Tech Mono', monospace",
-                    fontSize: "9px",
-                    letterSpacing: "1px",
-                    color: "var(--dim)",
-                    textTransform: "uppercase",
+                    fontSize: "10px",
+                    color: "var(--blue)",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    marginBottom: "8px",
                   }}
                 >
-                  Active Cascades
-                </h3>
-                {cascades.length === 0 ? (
-                  <EmptyState
-                    title="No cascades"
-                    message="No belief cascades detected in the current time range."
-                  />
-                ) : (
-                  <div className="space-y-2">
-                    {cascades.map((cascade) => (
-                      <div
-                        key={cascade.topic}
-                        className="flex items-center gap-4 p-3"
+                  ← All topics
+                </button>
+
+                {filtered.map((b) => (
+                  <div
+                    key={b.id}
+                    className="p-4"
+                    style={{ backgroundColor: "var(--panel)", border: "1px solid var(--border)" }}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <Link
+                        href={`/agents/${b.agent?.id}`}
+                        className="flex items-center gap-2"
+                        style={{ textDecoration: "none" }}
+                      >
+                        <span style={{ fontSize: "14px" }}>{b.agent?.avatar_emoji}</span>
+                        <span style={{ fontFamily: "'Rajdhani', sans-serif", fontWeight: 600, fontSize: "14px", color: "var(--text)" }}>
+                          {b.agent?.name}
+                        </span>
+                      </Link>
+                      <span
+                        className="px-2 py-0.5"
                         style={{
-                          backgroundColor: "var(--panel)",
-                          borderWidth: "1px",
-                          borderStyle: "solid",
-                          borderColor: "var(--border)",
+                          fontFamily: "'Share Tech Mono', monospace",
+                          fontSize: "10px",
+                          color: confidenceColor(b.confidence),
+                          backgroundColor: b.confidence >= 0.7 ? "var(--green-bg)" : b.confidence >= 0.4 ? "var(--amber-bg)" : "var(--red-bg)",
+                          border: `1px solid ${b.confidence >= 0.7 ? "var(--green-br)" : b.confidence >= 0.4 ? "var(--amber-br)" : "var(--red-br)"}`,
                         }}
                       >
-                        <span
-                          className="px-1.5 py-0.5"
-                          style={{
-                            fontFamily: "'Share Tech Mono', monospace",
-                            fontSize: "7px",
-                            letterSpacing: "1px",
-                            color: getCategoryColor(cascade.category.toLowerCase()),
-                            backgroundColor: "var(--panel2)",
-                            borderWidth: "1px",
-                            borderStyle: "solid",
-                            borderColor: "var(--border)",
-                          }}
-                        >
-                          {cascade.category.toUpperCase()}
-                        </span>
-                        <span
-                          className="flex-1 min-w-0"
-                          style={{
-                            fontFamily: "'DM Sans', sans-serif",
-                            fontSize: "12px",
-                            color: "var(--text)",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {cascade.topic}
-                        </span>
-                        <span
-                          style={{
-                            fontFamily: "'Share Tech Mono', monospace",
-                            fontSize: "9px",
-                            color: "var(--amber)",
-                          }}
-                        >
-                          {cascade.count} updates
+                        {(b.confidence * 100).toFixed(0)}% confident
+                      </span>
+                    </div>
+                    <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "13px", color: "var(--dim)", lineHeight: 1.6 }}>
+                      &ldquo;{b.statement}&rdquo;
+                    </p>
+                    <div className="mt-2 h-1.5 w-full" style={{ backgroundColor: "var(--panel2)" }}>
+                      <div className="h-1.5" style={{ width: `${b.confidence * 100}%`, backgroundColor: confidenceColor(b.confidence) }} />
+                    </div>
+                    <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "8px", color: "var(--dimmer)", marginTop: "4px", display: "block" }}>
+                      Updated {timeAgo(b.updated_at)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Sidebar: Recent changes */}
+          <aside className="w-full lg:w-[300px] shrink-0">
+            <div
+              className="p-4"
+              style={{ backgroundColor: "var(--panel)", border: "1px solid var(--border)" }}
+            >
+              <h3
+                className="mb-3"
+                style={{
+                  fontFamily: "'Share Tech Mono', monospace",
+                  fontSize: "9px",
+                  letterSpacing: "1px",
+                  color: "var(--dim)",
+                  textTransform: "uppercase",
+                }}
+              >
+                Recent Belief Changes
+              </h3>
+
+              {recentChanges.length === 0 ? (
+                <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "12px", color: "var(--dimmer)", fontStyle: "italic" }}>
+                  No belief changes recorded yet.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {recentChanges.map((change) => {
+                    const before = (change.confidence_before * 100).toFixed(0);
+                    const after = (change.confidence_after * 100).toFixed(0);
+                    const went = change.confidence_after > change.confidence_before ? "↑" : "↓";
+                    const color = change.confidence_after > change.confidence_before ? "var(--green)" : "var(--red)";
+
+                    return (
+                      <div key={change.id} style={{ borderBottom: "1px solid var(--border)", paddingBottom: "8px" }}>
+                        <div className="flex items-center gap-1.5">
+                          <span style={{ fontSize: "10px" }}>{change.belief?.agent?.avatar_emoji}</span>
+                          <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color: "var(--dim)" }}>
+                            {change.belief?.agent?.name}
+                          </span>
+                          <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "9px", color, fontWeight: 700 }}>
+                            {went} {before}% → {after}%
+                          </span>
+                        </div>
+                        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: "11px", color: "var(--dimmer)", marginTop: "2px" }}>
+                          {change.belief?.topic}
+                        </p>
+                        <span style={{ fontFamily: "'Share Tech Mono', monospace", fontSize: "7px", color: "var(--dimmer)" }}>
+                          {timeAgo(change.created_at)}
                         </span>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </aside>
         </div>
-      </div>
+      )}
     </div>
   );
 }
