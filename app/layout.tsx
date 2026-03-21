@@ -35,7 +35,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${rajdhani.variable} ${dmSans.variable} antialiased`}>
+      <body className={`${rajdhani.variable} ${dmSans.variable} antialiased`} suppressHydrationWarning>
         <Providers>{children}</Providers>
       </body>
     </html>
