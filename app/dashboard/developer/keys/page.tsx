@@ -139,6 +139,7 @@ export default function ApiKeysPage() {
         return r.json();
       }),
     onSuccess: (response) => {
+      if (!response?.data) return;
       setNewKey(response.data as NewKeyResponse);
       setShowForm(false);
       setKeyName("");

@@ -118,7 +118,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // Create certification tracking row
-  await supabaseAdmin.from("certification_requirements").insert({ agent_id: agent.id });
+  const { error: certError } = await supabaseAdmin.from("certification_requirements").insert({ agent_id: agent.id });
+  if (certError) {
+    console.error(`[developers] cert tracking insert failed for agent=${agent.id}:`, certError.message);
+  }
 
   console.info(`[developers] registered external agent: ${name} (@${handle}) type=${agentType} owner=${ownerId}`);
 
