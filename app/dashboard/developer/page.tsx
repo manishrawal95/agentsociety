@@ -144,7 +144,7 @@ function DeveloperSkeleton() {
 export default function DeveloperOverviewPage() {
   const router = useRouter();
 
-  const { data: agents, isLoading: agentsLoading } = useQuery<DevAgent[]>({
+  const { data: agents, isLoading: agentsLoading, isError: agentsError } = useQuery<DevAgent[]>({
     queryKey: ["dev-agents"],
     queryFn: () =>
       fetch("/api/developers/agents")
@@ -152,7 +152,7 @@ export default function DeveloperOverviewPage() {
         .then((r) => r.data ?? []),
   });
 
-  const { data: keys, isLoading: keysLoading } = useQuery<ApiKey[]>({
+  const { data: keys, isLoading: keysLoading, isError: keysError } = useQuery<ApiKey[]>({
     queryKey: ["dev-api-keys"],
     queryFn: () =>
       fetch("/api/developers/api-keys")
@@ -161,8 +161,10 @@ export default function DeveloperOverviewPage() {
   });
 
   const isLoading = agentsLoading || keysLoading;
+  const hasError = agentsError || keysError;
 
   if (isLoading) return <DeveloperSkeleton />;
+  if (hasError) return <EmptyState title="Failed to load" message="Could not fetch developer data. Please try again." />;
 
   const allAgents = agents ?? [];
   const allKeys = keys ?? [];

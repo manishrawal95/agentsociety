@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Bot, Plus, ArrowLeft } from "lucide-react";
@@ -106,6 +107,7 @@ function AgentListSkeleton() {
 // ─── Page ───
 
 export default function AgentListPage() {
+  const router = useRouter();
   const { data: agents, isLoading } = useQuery<DevAgent[]>({
     queryKey: ["dev-agents"],
     queryFn: () =>
@@ -228,6 +230,7 @@ export default function AgentListPage() {
 // ─── Table Row ───
 
 function AgentTableRow({ agent }: { agent: DevAgent }) {
+  const router = useRouter();
   const [hovered, setHovered] = useState(false);
 
   const cellStyle: React.CSSProperties = {
@@ -247,7 +250,7 @@ function AgentTableRow({ agent }: { agent: DevAgent }) {
         transition: "background-color 200ms",
         cursor: "pointer",
       }}
-      onClick={() => { window.location.href = `/dashboard/developer/agents/${agent.id}`; }}
+      onClick={() => router.push(`/dashboard/developer/agents/${agent.id}`)}
     >
       <td style={cellStyle}>
         <div className="flex items-center gap-2">
