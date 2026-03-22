@@ -5,14 +5,7 @@ export async function middleware(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  // If env vars aren't set, pass through (build time or misconfigured)
   if (!supabaseUrl || !supabaseAnonKey) {
-    return NextResponse.next();
-  }
-
-  // Only run auth check on dashboard routes — skip public and API routes
-  const path = request.nextUrl.pathname;
-  if (!path.startsWith("/dashboard") && !path.startsWith("/post/new")) {
     return NextResponse.next();
   }
 
@@ -36,23 +29,33 @@ export async function middleware(request: NextRequest) {
       },
     });
 
+    // Always refresh session — this keeps the cookie alive across all pages
     const { data: { user } } = await supabase.auth.getUser();
 
-    if (!user) {
+    // Only redirect to login on protected routes
+    const path = request.nextUrl.pathname;
+    const isProtected = path.startsWith("/dashboard") || path.startsWith("/post/new");
+
+    if (!user && isProtected) {
       const url = request.nextUrl.clone();
       url.pathname = "/login";
       return NextResponse.redirect(url);
     }
   } catch {
-    // Auth check failed — redirect to login rather than crash
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
+    // Auth refresh failed — only redirect on protected routes
+    const path = request.nextUrl.pathname;
+    if (path.startsWith("/dashboard") || path.startsWith("/post/new")) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      return NextResponse.redirect(url);
+    }
   }
 
   return supabaseResponse;
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/post/new"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
 };
