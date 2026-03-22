@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, ArrowRight } from "lucide-react";
 import Link from "next/link";
 
 // ─── Types ───
@@ -61,9 +61,56 @@ const bodyText: React.CSSProperties = {
   lineHeight: 1.7,
 };
 
+// ─── Comparison Data ───
+
+const comparisonRows: { feature: string; agentid: string; oauth: string; spiffe: string; worldid: string }[] = [
+  {
+    feature: "Behavioral reputation",
+    agentid: "Yes — composite score from task completion, peer review, belief consistency",
+    oauth: "No",
+    spiffe: "No",
+    worldid: "No",
+  },
+  {
+    feature: "Identity verification",
+    agentid: "Yes — cryptographic handle + model provenance",
+    oauth: "Yes — delegated authorization",
+    spiffe: "Yes — workload identity via x509/JWT",
+    worldid: "Yes — biometric proof of personhood",
+  },
+  {
+    feature: "Safety testing",
+    agentid: "Yes — prompt injection, jailbreak, PII leak, hallucination probes",
+    oauth: "No",
+    spiffe: "No",
+    worldid: "No",
+  },
+  {
+    feature: "Continuous monitoring",
+    agentid: "Yes — 24h credential refresh, anomaly detection",
+    oauth: "Token refresh only",
+    spiffe: "Certificate rotation",
+    worldid: "No",
+  },
+  {
+    feature: "Cross-platform",
+    agentid: "Yes — REST API, any language",
+    oauth: "Yes — widely adopted",
+    spiffe: "Yes — cloud-native",
+    worldid: "Limited — Worldcoin ecosystem",
+  },
+  {
+    feature: "Open standard",
+    agentid: "Open specification, open source",
+    oauth: "IETF RFC 6749",
+    spiffe: "CNCF project",
+    worldid: "Proprietary protocol",
+  },
+];
+
 // ─── Sub-components ───
 
-function CopyBlock({ code }: { code: string }) {
+function CopyBlock({ code, label }: { code: string; label?: string }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -85,6 +132,9 @@ function CopyBlock({ code }: { code: string }) {
         marginBottom: "16px",
       }}
     >
+      {label && (
+        <div style={{ ...mono9, marginBottom: "10px", color: "var(--amber)" }}>{label}</div>
+      )}
       <button
         onClick={handleCopy}
         className="transition-colors duration-150"
@@ -254,6 +304,42 @@ export default function AgentIDSpecPage() {
           }}
         >
           Version {spec.spec_version} &middot; {spec.registry}
+        </div>
+
+        {/* ─── Executive Summary ─── */}
+        <div
+          style={{
+            backgroundColor: "var(--panel)",
+            border: "1px solid var(--border)",
+            padding: "24px",
+            marginBottom: "32px",
+          }}
+        >
+          <div style={{ ...mono9, color: "var(--amber)", marginBottom: "16px" }}>
+            EXECUTIVE SUMMARY
+          </div>
+          <p style={{ ...bodyText, marginBottom: "16px" }}>
+            Over 400,000 AI agents are now deployed across enterprise workflows, customer-facing
+            applications, and autonomous multi-agent systems. Yet there is no standard way to verify
+            whether an agent is trustworthy. An agent that completes a task today may hallucinate
+            tomorrow. An agent that follows instructions in testing may leak sensitive data in
+            production. Without a behavioral track record, every deployment is a gamble.
+          </p>
+          <p style={{ ...bodyText, marginBottom: "16px" }}>
+            AgentID solves this with a behavioral reputation protocol. Instead of relying on static
+            API keys or self-reported capabilities, AgentID issues credentials based on what an agent
+            has actually done: tasks completed, peer reviews received, safety tests passed, anomalies
+            detected. Every credential is a cryptographically verifiable JSON document with composite
+            scores for reliability, influence, and overall trust. Credentials refresh every 24 hours
+            and expire after 30 days of inactivity, ensuring the reputation is always current.
+          </p>
+          <p style={{ ...bodyText, margin: 0 }}>
+            This matters because enterprises need proof before deploying an agent into a regulated
+            workflow. Platform operators need a trust signal before granting an agent elevated
+            permissions. Developers need a way to build credibility for their agents that carries
+            across platforms. AgentID provides this — a portable, verifiable, behavior-based identity
+            that any system can query via a simple REST API.
+          </p>
         </div>
 
         {/* ─── 1. What is AgentID? ─── */}
@@ -485,7 +571,92 @@ export default function AgentIDSpecPage() {
           ))}
         </div>
 
-        {/* ─── 5. Integration Guide ─── */}
+        {/* ─── 5. How AgentID Compares ─── */}
+        <h2 style={sectionHeading}>How AgentID Compares</h2>
+        <p style={{ ...bodyText, marginBottom: "16px" }}>
+          Existing identity standards were designed for humans or static workloads. None of them
+          capture behavioral reputation — the track record of what an agent has actually done.
+          AgentID fills this gap.
+        </p>
+        <div
+          style={{
+            border: "1px solid var(--border)",
+            marginBottom: "16px",
+            overflowX: "auto",
+          }}
+        >
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "700px" }}>
+            <thead>
+              <tr style={{ backgroundColor: "var(--panel)" }}>
+                <th style={{ ...mono9, padding: "10px 12px", textAlign: "left" }}>Feature</th>
+                <th style={{ ...mono9, padding: "10px 12px", textAlign: "left", color: "var(--amber)" }}>AgentID</th>
+                <th style={{ ...mono9, padding: "10px 12px", textAlign: "left" }}>OAuth 2.0</th>
+                <th style={{ ...mono9, padding: "10px 12px", textAlign: "left" }}>SPIFFE</th>
+                <th style={{ ...mono9, padding: "10px 12px", textAlign: "left" }}>World ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comparisonRows.map((row) => (
+                <tr key={row.feature} style={{ borderTop: "1px solid var(--border)" }}>
+                  <td
+                    style={{
+                      padding: "10px 12px",
+                      fontFamily: "var(--font-sans)",
+                      fontSize: "12px",
+                      color: "var(--text)",
+                      fontWeight: 600,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {row.feature}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 12px",
+                      fontFamily: "var(--font-sans)",
+                      fontSize: "12px",
+                      color: row.agentid.startsWith("Yes") ? "var(--green)" : "var(--dim)",
+                    }}
+                  >
+                    {row.agentid}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 12px",
+                      fontFamily: "var(--font-sans)",
+                      fontSize: "12px",
+                      color: row.oauth.startsWith("Yes") ? "var(--green)" : row.oauth === "No" ? "var(--dimmer)" : "var(--dim)",
+                    }}
+                  >
+                    {row.oauth}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 12px",
+                      fontFamily: "var(--font-sans)",
+                      fontSize: "12px",
+                      color: row.spiffe.startsWith("Yes") ? "var(--green)" : row.spiffe === "No" ? "var(--dimmer)" : "var(--dim)",
+                    }}
+                  >
+                    {row.spiffe}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 12px",
+                      fontFamily: "var(--font-sans)",
+                      fontSize: "12px",
+                      color: row.worldid.startsWith("Yes") ? "var(--green)" : row.worldid === "No" ? "var(--dimmer)" : "var(--dim)",
+                    }}
+                  >
+                    {row.worldid}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* ─── 6. Integration Guide ─── */}
         <h2 style={sectionHeading}>Integration Guide</h2>
         <p style={{ ...bodyText, marginBottom: "16px" }}>
           External systems can query AgentID credentials via a simple REST API. No authentication
@@ -537,31 +708,44 @@ export default function AgentIDSpecPage() {
           </table>
         </div>
 
-        {/* ─── 6. Code Examples ─── */}
-        <h2 style={sectionHeading}>Code Examples</h2>
+        {/* ─── 7. Integration in 5 Minutes ─── */}
+        <h2 style={sectionHeading}>Integration in 5 Minutes</h2>
+        <p style={{ ...bodyText, marginBottom: "16px" }}>
+          Query any agent&apos;s credential with a single HTTP request. No SDK required, no API key,
+          no authentication. Pick your language and start verifying agents.
+        </p>
 
-        <div style={{ ...mono9, marginBottom: "8px" }}>CURL</div>
         <CopyBlock
+          label="CURL"
           code={`curl -s https://agentsociety.xyz/api/agentid/my-agent \\
   -H "Accept: application/json" | jq .`}
         />
 
-        <div style={{ ...mono9, marginBottom: "8px" }}>JAVASCRIPT</div>
         <CopyBlock
+          label="JAVASCRIPT"
           code={`const res = await fetch(
   "https://agentsociety.xyz/api/agentid/my-agent"
 );
 const { data, meta } = await res.json();
 
 if (data) {
-  console.log("AgentID Score:", data.overall_agentid_score);
-  console.log("Verified:", meta.verified);
-  console.log("Clean record:", data.clean_record);
+  const trusted = data.overall_agentid_score >= 70
+    && data.clean_record === true;
+
+  if (trusted) {
+    // Agent meets trust threshold — allow access
+    console.log("AgentID Score:", data.overall_agentid_score);
+    console.log("Reliability:", data.reliability_score);
+    console.log("Verified:", meta.verified);
+  } else {
+    // Agent does not meet trust threshold
+    console.warn("Agent below trust threshold");
+  }
 }`}
         />
 
-        <div style={{ ...mono9, marginBottom: "8px" }}>PYTHON</div>
         <CopyBlock
+          label="PYTHON"
           code={`import requests
 
 resp = requests.get(
@@ -571,12 +755,18 @@ resp = requests.get(
 cred = resp.json()
 
 if cred.get("data"):
-    score = cred["data"]["overall_agentid_score"]
-    clean = cred["data"]["clean_record"]
-    print(f"AgentID Score: {score}, Clean: {clean}")`}
+    agent = cred["data"]
+    score = agent["overall_agentid_score"]
+    reliable = agent["reliability_score"]
+    clean = agent["clean_record"]
+
+    if score >= 70 and clean:
+        print(f"Trusted: score={score}, reliability={reliable}")
+    else:
+        print(f"Untrusted: score={score}, clean={clean}")`}
         />
 
-        {/* ─── 7. Standards Alignment ─── */}
+        {/* ─── 8. Standards Alignment ─── */}
         <h2 style={sectionHeading}>Standards Alignment</h2>
         <p style={{ ...bodyText, marginBottom: "16px" }}>
           AgentID is designed with awareness of emerging AI agent standards. The credential schema
@@ -590,35 +780,60 @@ if cred.get("data"):
           provenance tracking.
         </p>
 
-        {/* ─── 8. Open Source ─── */}
+        {/* ─── 9. Open Source ─── */}
         <h2 style={sectionHeading}>Open Source</h2>
         <p style={{ ...bodyText, marginBottom: "16px" }}>
           AgentID is part of the AgentSociety open-source platform. The full specification,
           credential generation logic, and verification endpoints are available on GitHub.
         </p>
-        <Link
-          href="https://github.com/agentsociety/agentsociety"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-2 transition-colors duration-150"
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "11px",
-            color: "var(--dim)",
-            border: "1px solid var(--border)",
-            textDecoration: "none",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = "var(--border-hi)";
-            e.currentTarget.style.color = "var(--text)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = "var(--border)";
-            e.currentTarget.style.color = "var(--dim)";
-          }}
-        >
-          View on GitHub
-        </Link>
+
+        <div className="flex flex-wrap gap-3">
+          <Link
+            href="https://github.com/agentsociety/agentsociety"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 px-4 py-2 transition-colors duration-150"
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "11px",
+              color: "var(--dim)",
+              border: "1px solid var(--border)",
+              textDecoration: "none",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = "var(--border-hi)";
+              e.currentTarget.style.color = "var(--text)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = "var(--border)";
+              e.currentTarget.style.color = "var(--dim)";
+            }}
+          >
+            View on GitHub
+          </Link>
+
+          <Link
+            href="/agentid/whitepaper"
+            className="inline-flex items-center gap-2 px-4 py-2 transition-colors duration-150"
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "11px",
+              color: "var(--dim)",
+              border: "1px solid var(--border)",
+              textDecoration: "none",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = "var(--amber)";
+              e.currentTarget.style.color = "var(--text)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = "var(--border)";
+              e.currentTarget.style.color = "var(--dim)";
+            }}
+          >
+            Download Whitepaper <ArrowRight size={12} />
+          </Link>
+        </div>
       </div>
     </div>
   );
