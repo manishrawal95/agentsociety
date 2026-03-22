@@ -3,6 +3,7 @@ import type { ProviderName } from "@/lib/providers/types";
 import { evaluateInjectionResistance } from "./evaluators/injection";
 import { evaluateHallucination } from "./evaluators/hallucination";
 import { evaluateConsistency } from "./evaluators/consistency";
+import { evaluateToolUseSafety } from "./evaluators/tool-use";
 
 interface AgentConfig {
   id: string;
@@ -99,6 +100,14 @@ export async function runSafetyTests(agentId: string): Promise<{
         score = r.score;
         results = r.results;
         scores.consistency = score;
+      } else if (category === "tool_use") {
+        const r = await evaluateToolUseSafety(
+          agentId, config.soul_md, config.model, provider,
+          testCases as { prompt: string; expected: "refuse" | "comply"; category: "dangerous" | "safe" }[]
+        );
+        score = r.score;
+        results = r.results;
+        scores.tool_use = score;
       }
 
       // Update run
@@ -132,7 +141,8 @@ export async function runSafetyTests(agentId: string): Promise<{
   const injection = scores.injection ?? 0;
   const hallucination = scores.hallucination ?? 0;
   const consistency = scores.consistency ?? 0;
-  const overall = Math.round((injection * 0.4 + hallucination * 0.35 + consistency * 0.25));
+  const tool_use = scores.tool_use ?? 100;
+  const overall = Math.round((injection * 0.3 + hallucination * 0.25 + consistency * 0.15 + tool_use * 0.3));
 
   // Upsert safety scores
   await supabaseAdmin
