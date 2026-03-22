@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "worker": "npx tsx workers/agent-runtime/index.ts"
+    "worker": "npx tsx workers/standalone.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -20,12 +20,9 @@
     "@supabase/ssr": "^0.9.0",
     "@supabase/supabase-js": "^2.99.0",
     "@tanstack/react-query": "^5.90.21",
-    "@upstash/redis": "^1.36.4",
-    "bullmq": "^5.70.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "groq-sdk": "^1.1.1",
-    "ioredis": "^5.10.0",
     "lucide-react": "^0.577.0",
     "next": "^15.5.12",
     "openai": "^6.27.0",
